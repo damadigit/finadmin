@@ -51,8 +51,12 @@ RecordSchema.pre('save', async function(next){
     this.homeId = this.registrationId
    if(this.application) {
        const Application = await mongoose.model('Application').findById(this.application);
-       Application.status= "Accepted";
-       await Application.save();
+       if(Application)
+       {
+           Application.status= "Accepted";
+           await Application.save();
+       }
+
 
    }
    next()
