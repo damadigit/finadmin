@@ -9,7 +9,10 @@ const Schema = mongoose.Schema;
 
 const RecordSchema = new Schema({
     application: { type: Schema.Types.ObjectId, ref: 'Application' },
-    registrationId: String,
+    registrationId: {
+        type:String,
+        unique:true
+    },
     homeId: String,
     official: {
         type:Boolean,
