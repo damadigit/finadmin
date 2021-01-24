@@ -48,6 +48,16 @@ const RecordSchema = new Schema({
 
 });
 
+RecordSchema.virtual('fullName').
+get(function() { return `${this.name||''} ${this.fatherName||''} ${this.gFatherName||''}`; }).
+set(function(v) {
+    // `v` is the value being set, so use the value to set
+    // `firstName` and `lastName`.
+    const name = v.substring(0, v.indexOf(' '));
+    const fatherName = v.substring(v.indexOf(' ') + 1);
+    const gFatherName = v.substring(v.indexOf(' ') + 2);
+    this.set({ name, fatherName, gFatherName });
+});
 
 RecordSchema.pre('save', async function(next){
    // console.log(this)

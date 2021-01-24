@@ -21,9 +21,12 @@ const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
 //
 // );
 
-buildSchema('Record',schemaComposer);
-buildSchema('Visit',schemaComposer);
+const {ModelTC:RecordModelTC} = buildSchema('Record',schemaComposer);
+const {ModelTC:VisitModelTC}  = buildSchema('Visit',schemaComposer);
 
+RecordModelTC.addFields({
+ fullName: 'String'
+})
 
 // require('./schemas/profile')
 // require('./mongooseQL')('Company',schemaComposer);

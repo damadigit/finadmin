@@ -11,7 +11,7 @@ mongoose.connection.once('open', () => {
 
 });
 require('./server/models')();
-const port =  process.env.PORT || 4008;
+const port =  process.env.PORT || 40012;
 const schema = require('./server/api/graphql/schema');
 async function StartServer() {
     const server = new ApolloServer({schema, introspection: true});
