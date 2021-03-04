@@ -1,12 +1,34 @@
-
+const passport = require("koa-passport");
 const mongoose = require('mongoose');
 const { composeWithMongoose } = require('graphql-compose-mongoose');
 
 const pluralize = require('pluralize')
 const ListMetadataTC = require('./schemas/listMetaData')
+// const {isAuthenticated} = require("../../auth");
 module.exports = function(name,schemaComposer ) {
 
 
+
+
+const authMiddleware = async (resolve, root, args, context, info) => {
+     const {ctx}  = context;
+     const op = (info.operation && info.operation.name && info.operation.name.value) || ''
+   // console.log(passport.authenticate('jwt')(ctx,next))
+          // const result =
+
+    if(args.record) {
+        if(op.includes('update'))
+        { args.record.modifiedBy = ctx.state.user._id
+
+        }
+        if(op.includes('create')) {
+            args.record.createdBy = ctx.state.user._id
+        }
+
+
+    }
+        return await resolve(root, args, context, info)
+    }
 
 
     const Model = mongoose.model(name);
@@ -58,14 +80,14 @@ module.exports = function(name,schemaComposer ) {
 
 
     schemaComposer.Mutation.addFields({
-        [`create${name}`]: ModelTC.getResolver('createOne'),
-        [`createMany${name}`]: ModelTC.getResolver('createMany'),
-        [`update${name}`]: ModelTC.getResolver('updateById'),
-        [`updateOne${name}`]: ModelTC.getResolver('updateOne'),
-        [`updateMany${name}`]: ModelTC.getResolver('updateMany'),
-        [`delete${name}`]: ModelTC.getResolver('removeById'),
-        [`deleteOne${name}`]: ModelTC.getResolver('removeOne'),
-        [`deleteMany${name}`]: ModelTC.getResolver('removeMany'),
+        [`create${name}`]: ModelTC.getResolver('createOne',[authMiddleware]),
+        [`createMany${name}`]: ModelTC.getResolver('createMany',[authMiddleware]),
+        [`update${name}`]: ModelTC.getResolver('updateById',[authMiddleware]),
+        [`updateOne${name}`]: ModelTC.getResolver('updateOne',[authMiddleware]),
+        [`updateMany${name}`]: ModelTC.getResolver('updateMany',[authMiddleware]),
+        [`delete${name}`]: ModelTC.getResolver('removeById',[authMiddleware]),
+        [`deleteOne${name}`]: ModelTC.getResolver('removeOne',[authMiddleware]),
+        [`deleteMany${name}`]: ModelTC.getResolver('removeMany',[authMiddleware]),
     });
 
 

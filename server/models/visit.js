@@ -63,6 +63,9 @@ const VisitSchema = new Schema({
     },
     category: String,
     motivation: String,
-    visitPhotos: [FileSchema]
-})
+    visitPhotos: [FileSchema],
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    modifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+
+},{timestamps: true})
 module.exports = mongoose.model('Visit', VisitSchema);

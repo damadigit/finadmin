@@ -40,13 +40,12 @@ const RecordSchema = new Schema({
     status: String,
     processedBy: String,
     sponsor:SponsorSchema,
-    createdDate: {
-        type: Date,
-        default: Date.now
-    }
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    modifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
 
-});
+
+}, {    timestamps: true});
 
 RecordSchema.virtual('fullName').
 get(function() { return `${this.name||''} ${this.fatherName||''} ${this.gFatherName||''}`; }).

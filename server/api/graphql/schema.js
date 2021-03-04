@@ -23,11 +23,14 @@ const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
 
 const {ModelTC:RecordModelTC} = buildSchema('Record',schemaComposer);
 const {ModelTC:VisitModelTC}  = buildSchema('Visit',schemaComposer);
-
+buildSchema('User',schemaComposer);
 RecordModelTC.addFields({
  fullName: 'String'
 })
 
+ApplicationModelTC.addFields({
+ fullName: 'String'
+})
 // require('./schemas/profile')
 // require('./mongooseQL')('Company',schemaComposer);
 //addEntityNameRegexpSearch()

@@ -39,18 +39,29 @@ const ApplicationSchema = new Schema({
         default: 'Pending'
     },
     processedBy: String,
-    createdDate: {
-        type: Date,
-        default: Date.now
-    }
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    modifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
 
 
 
 
 
-});
+},{timestamps: true});
 
 // ApplicationSchema.
+
+ApplicationSchema.virtual('fullName').
+get(function() { return `${this.name||''} ${this.fatherName||''} ${this.gFatherName||''}`; }).
+set(function(v) {
+    // `v` is the value being set, so use the value to set
+    // `firstName` and `lastName`.
+    const name = v.substring(0, v.indexOf(' '));
+    const fatherName = v.substring(v.indexOf(' ') + 1);
+    const gFatherName = v.substring(v.indexOf(' ') + 2);
+    this.set({ name, fatherName, gFatherName });
+});
+
+
 
 module.exports = mongoose.model('Application', ApplicationSchema);
