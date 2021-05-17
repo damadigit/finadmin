@@ -1,13 +1,16 @@
 const passport = require("koa-passport");
 const mongoose = require('mongoose');
 const { composeWithMongoose } = require('graphql-compose-mongoose');
-
+const _ = require("lodash")
 const pluralize = require('pluralize')
 const ListMetadataTC = require('./schemas/listMetaData')
 // const {isAuthenticated} = require("../../auth");
 module.exports = function(name,schemaComposer ) {
 
-
+    const flattenKeys = (obj, path = []) =>
+        !_.isObject(obj)
+            ? { [path.join('.')]: obj }
+            : _.reduce(obj, (cum, next, key) => _.merge(cum, flattenKeys(next, [...path, key])), {});
 
 
 const authMiddleware = async (resolve, root, args, context, info) => {
@@ -48,8 +51,10 @@ const authMiddleware = async (resolve, root, args, context, info) => {
             // if (!user) user = await User.create(args.record);
             // console.log(args)
 
+
             return {
-                count: await Model.countDocuments(args.filter)
+
+                count: await Model.countDocuments(flattenKeys(args.filter))
             }
         },
     });
