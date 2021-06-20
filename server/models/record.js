@@ -31,13 +31,23 @@ const RecordSchema = new Schema({
         remark: String,
         history: [String]
     },
+    exitInfo: {
+        reason: String,
+        remark: String,
+        leaveLetter: String,
+        date: Date,
+    },
     currentEducation: EducationSchema,
     previousEducations: [EducationSchema],
     families: [FamilySchema],
     place: PlaceSchema,
     story: StorySchema,
     date: Date,
-    status: String,
+    status: {
+        type: String,
+        enum: ['Active', 'Discontinued'],
+        default: 'Active'
+    },
     processedBy: String,
     sponsor:SponsorSchema,
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
