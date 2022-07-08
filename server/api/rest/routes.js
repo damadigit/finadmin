@@ -65,4 +65,24 @@ router
         if (user) ctx.body = user;
     });
 
+router
+    .get('/fixHttps', async ctx => {
+        const records = await mongoose.model('Record').find({}).exec();
+        for (const r of records) {
+
+            if(r.place&&r.place.photo)
+            {
+                console.log(r.place.photo)
+                r.place.photo = r.place.photo.replace("http","https")
+              //  r.status = "Active"
+                await r.save()
+            }
+        }
+        ctx.body = records.map(r=>r.place&&r.place.photo)
+
+
+        }
+
+    );
+
 module.exports = router;
