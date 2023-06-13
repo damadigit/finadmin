@@ -10,7 +10,10 @@ const VisitSchema = new Schema({
     takenBy: [{
         name: String
     }],
-    date: Date,
+    date: {
+        type: Date,
+        index: true
+    },
     addressChange: Boolean,
     address: AddressSchema,
 
