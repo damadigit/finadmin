@@ -25,6 +25,9 @@ const EducationSchema = new Schema({
     schoolType: String,
     isDistance: Boolean,
     grade: Number,
+    field: String,
+    studyDuration:Number,
+    durationPeriod:String,// month, year
     yearStart: Number,
     yearEnd: Number,
     active: Boolean,
