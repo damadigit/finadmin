@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const moment = require('moment')
 const Schema = mongoose.Schema;
 const AddressSchema =  new Schema({
     phones: [{
@@ -19,7 +20,8 @@ const AddressSchema =  new Schema({
     remark: String
 })
 const EducationSchema = new Schema({
-    level: String,
+    level: String, // kinderkargen elementatry high school hight education
+    qualificationLevel:String,// masters degree diploma
     schoolName: String,
     status: String,
     schoolType: String,
@@ -69,6 +71,7 @@ const FamilySchema = new Schema({
 })
 
 
+
 const SponsorSchema = new Schema({
     name: String,
     fatherName: String,
@@ -81,6 +84,7 @@ const SponsorSchema = new Schema({
 
 const FileSchema = new Schema({
     filePath: String,
+    type: String,
     title: String,
     date: Date,
     description: String
@@ -113,7 +117,15 @@ const StorySchema = new Schema ( {
 
 })
 
+const PostSchema = new Schema ( {
+    post: String,
+    title: String,
+    type:String,
+    date: Date,
+    filePath: String,
 
 
+})
 
-module.exports = {EducationSchema, FamilySchema,PlaceSchema,AddressSchema,StorySchema,SponsorSchema, FileSchema}
+
+module.exports = {EducationSchema, FamilySchema,PlaceSchema,AddressSchema,StorySchema,SponsorSchema, FileSchema, PostSchema}

@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const {ExpenseSchema, OtherIncomeSchema,FamilyIncomeSchema, AssetSchema} = require('./visitSchemas.js')
 const {EducationSchema, FamilySchema,StorySchema,PlaceSchema, SponsorSchema,AddressSchema,FileSchema} = require('./schemas.js')
 const Schema = mongoose.Schema;
-
+const moment = require('moment')
 const VisitSchema = new Schema({
     homeId: String,
     takenBy: [{
@@ -71,4 +71,19 @@ const VisitSchema = new Schema({
     modifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
 },{timestamps: true})
+
+VisitSchema.virtual('age').get(function (){
+    return moment(this.date).diff(moment(this.birthDate),'years') || -1
+})
+
+VisitSchema.virtual('fullName').
+get(function() { return `${this.name||''} ${this.fatherName||''} ${this.gFatherName||''}`; }).
+set(function(v) {
+    // `v` is the value being set, so use the value to set
+    // `firstName` and `lastName`.
+    const name = v.substring(0, v.indexOf(' '));
+    const fatherName = v.substring(v.indexOf(' ') + 1);
+    const gFatherName = v.substring(v.indexOf(' ') + 2);
+    this.set({ name, fatherName, gFatherName });
+});
 module.exports = mongoose.model('Visit', VisitSchema);

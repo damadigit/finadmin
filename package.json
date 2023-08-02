@@ -16,6 +16,7 @@
     "apollo-server-koa": "^2.15.0",
     "axios": "^0.26.0",
     "bcrypt-nodejs": "^0.0.3",
+    "docx": "^8.2.0",
     "graphql": "^15.1.0",
     "graphql-compose": "^7.18.1",
     "graphql-compose-mongoose": "^7.3.8",

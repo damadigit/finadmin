@@ -1,6 +1,7 @@
 const Router = require("koa-router");
 const passport = require("koa-passport");
 const mongoose = require('mongoose');
+const {getVisitWord} = require("../../reports/visitWordReport");
 const User = mongoose.model('User')
 
 const {
@@ -84,5 +85,18 @@ router
         }
 
     );
+
+router.get('/reports/visit/:id', async ctx => {
+
+    const visitId = ctx.params.id;
+    const visit = await mongoose.model('Visit').findById(visitId)
+    console.log("age",visit.age)
+
+    ctx.attachment('visit.docx');
+    const b64string = await getVisitWord({visit})
+    ctx.body = Buffer.from(b64string, 'base64');
+
+})
+
 
 module.exports = router;

@@ -2,6 +2,7 @@
 
 
 const mongoose = require('mongoose');
+const {PostSchema} = require("./schemas");
 const {EducationSchema, FamilySchema,StorySchema,PlaceSchema, SponsorSchema,AddressSchema} = require('./schemas.js')
 const Schema = mongoose.Schema;
 

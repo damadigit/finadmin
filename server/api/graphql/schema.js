@@ -23,6 +23,7 @@ const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
 
 const {ModelTC:RecordModelTC} = buildSchema('Record',schemaComposer);
 const {ModelTC:VisitModelTC}  = buildSchema('Visit',schemaComposer);
+const {ModelTC:PostModelTC}  = buildSchema('Post',schemaComposer);
 buildSchema('User',schemaComposer);
 RecordModelTC.addFields({
  fullName: 'String'
@@ -30,6 +31,11 @@ RecordModelTC.addFields({
 
 ApplicationModelTC.addFields({
  fullName: 'String'
+})
+
+
+VisitModelTC.addFields({
+ age: 'Int'
 })
 // require('./schemas/profile')
 // require('./mongooseQL')('Company',schemaComposer);
