@@ -2,6 +2,7 @@
 const axios = require('axios')
 const docx = require('docx');
 const moment = require('moment')
+const { convert } = require('html-to-text');
 const { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } = docx;
 const categories = {A:"Can Manage without finado fund", B:"Can Manage only with finado fund", C:"Can't Manage even with finado fund"}
 const utilities =[
@@ -17,6 +18,10 @@ const assets = [
     { id: 'Tv', name: 'TV' },
     { id: 'Refrigerator', name: 'Refrigerator' },
 ]
+const convertOptions = {
+    wordwrap: 130,
+    // ...
+};
 
 function getHeader(text, size=30) {
     return     new TableRow({
@@ -608,7 +613,7 @@ const getVisitWord =  async ({visit}) => {
                         children: [new Paragraph({
                             children:[
                                 new TextRun({
-                                    text: visit.motivation || '',
+                                    text: convert(visit.motivation || '', convertOptions),
                                     bold:true,
                                     size:26,
                                 })

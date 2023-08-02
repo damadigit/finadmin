@@ -20,6 +20,7 @@
     "graphql": "^15.1.0",
     "graphql-compose": "^7.18.1",
     "graphql-compose-mongoose": "^7.3.8",
+    "html-to-text": "^9.0.5",
     "jsonwebtoken": "^8.5.1",
     "koa-bodyparser": "^4.3.0",
     "koa-compose": "^4.1.0",
