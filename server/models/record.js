@@ -24,7 +24,10 @@ const RecordSchema = new Schema({
     fatherName: String,
     gFatherName: String,
     gender: String,
-    birthDate: Date,
+    birthDate: {
+        type: Date,
+        index: true
+    },
     placeOfBirth: String,
     address: AddressSchema,
     health: {

@@ -5,6 +5,7 @@ const {FileSchema} = require("./schemas");
 const PostSchema = new Schema({
     date: {
         type: Date,
+        default: new Date(),
         index: true
     },
     recordId: { type: Schema.Types.ObjectId, ref: 'Record' },
