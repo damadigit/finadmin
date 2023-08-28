@@ -40,7 +40,7 @@ const VisitSchema = new Schema({
     families: [FamilySchema],
     expense: ExpenseSchema,
     income: {
-        familyIncomes:[FamilyIncomeSchema],333333
+        familyIncomes:[FamilyIncomeSchema],
         otherIncomes: [OtherIncomeSchema]
     },
     asset: {
