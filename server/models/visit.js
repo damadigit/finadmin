@@ -33,11 +33,14 @@ const VisitSchema = new Schema({
     place: PlaceSchema,
     story:StorySchema,
     record: { type: Schema.Types.ObjectId, ref: 'Record' }, //benefitiaries // childrens
-    registrationId:String,
+    registrationId: {
+        type:String,
+        unique:true
+    },
     families: [FamilySchema],
     expense: ExpenseSchema,
     income: {
-        familyIncomes:[FamilyIncomeSchema],
+        familyIncomes:[FamilyIncomeSchema],333333
         otherIncomes: [OtherIncomeSchema]
     },
     asset: {
