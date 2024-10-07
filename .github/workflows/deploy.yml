@@ -9,8 +9,8 @@ on:
       - main
 
 env:
-  TAG_LATEST: ${{ secrets.REGISTRY_IMAGE }}/${{ github.ref_name }}-latest
-  TAG_COMMIT: ${{ secrets.REGISTRY_IMAGE }}/${{ github.ref_name }}-${{ github.sha }}
+  TAG_LATEST: ${{ secrets.REGISTRY_IMAGE }}/${{ github.ref_name }}:latest
+  TAG_COMMIT: ${{ secrets.REGISTRY_IMAGE }}/${{ github.ref_name }}:${{ github.sha }}
 
 jobs:
   publish:
