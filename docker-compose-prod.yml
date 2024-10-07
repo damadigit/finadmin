@@ -1,0 +1,27 @@
+services:
+  app:
+    image: "${TAG_COMMIT}"
+    container_name: finadmin_server
+    restart: always
+    depends_on:
+      - finadmin_db
+    ports:
+      - "4000:40012"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Africa/Nairobi
+      - NODE_ENV=production
+      - DATABASE_URL=mongodb://finadmin_db:27017/finadmin_db
+  finadmin_db:
+    restart: always
+    image: mongo
+    container_name: db_finadmin
+    ports:
+      - "27017:27017"
+    volumes:
+      - /home/.finadmin/backup:/etc/backup
+      - /etc/localtime:/etc/localtime:ro
+      - finadmin-data:/data/db
+volumes:
+  finadmin-data:
