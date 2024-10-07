@@ -49,8 +49,17 @@ jobs:
         run: |
           echo "TAG_COMMIT=${{ env.TAG_COMMIT }}" >> .env
           echo "NODE_ENV=production" >> .env
-          scp -o StrictHostKeyChecking=no .env docker-compose-prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:~/
-
+#          scp -o StrictHostKeyChecking=no .env ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:~/
+      # Use appleboy/scp-action to securely copy both .env and docker-compose-prod.yml
+      - name: Copy files via SCP
+        uses: appleboy/scp-action@v0.1.0
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Copy both .env and docker-compose-prod.yml to the server
+          source: ".env,docker-compose-prod.yml"
+          target: "~/"
       - name: Deploy via SSH
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
