@@ -58,13 +58,14 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # Copy both .env and docker-compose-prod.yml to the server
-          source: ".env,docker-compose-prod.yml"
-          target: "~/"
+          source: "./.env,./docker-compose-prod.yml"
+          target: "~/.deploy/${{ github.event.repository.name }}/"
       - name: Deploy via SSH
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             docker login -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }} ${{ secrets.REGISTRY }}
-            docker compose -p mates -f docker-compose-prod.yml down --remove-orphans
-            docker compose -p mates -f docker-compose-prod.yml pull
-            docker compose -p mates -f docker-compose-prod.yml up -d
+            cd ~/.deploy/${{ github.event.repository.name }}
+            docker compose -p finadmin -f docker-compose-prod.yml down --remove-orphans
+            docker compose -p finadmin -f docker-compose-prod.yml pull
+            docker compose -p finadmin -f docker-compose-prod.yml up -d
           EOF
