@@ -40,12 +40,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Set up SSH and copy files to server
+      - name: Checkout the repository
+        uses: actions/checkout@v3
+      - name: Set up SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Copy environment file and docker-compose to the server
+      - name: add environment file
         run: |
           echo "TAG_COMMIT=${{ env.TAG_COMMIT }}" >> .env
           echo "NODE_ENV=production" >> .env
