@@ -41,7 +41,7 @@ async function StartServer() {
     // });
     app.use(isAuthenticated());
     app.use(server.getMiddleware());
-    app.use(ctx => ctx.status = 404);
+    // app.use(ctx => ctx.status = 404);
     //await server.installSubscriptionHandlers(app.listener);
 
     //require('./server/api/routes')(app);
