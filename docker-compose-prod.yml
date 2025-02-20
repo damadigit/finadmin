@@ -9,6 +9,7 @@ services:
       - "4000:40012"
     volumes:
       - /etc/localtime:/etc/localtime:ro
+      - /home/.finadmin/files:/usr/src/app/uploads
     environment:
       - TZ=Africa/Nairobi
       - NODE_ENV=production
