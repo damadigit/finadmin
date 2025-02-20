@@ -5,6 +5,7 @@ const send = require('koa-send');
 const path = require('path');
 const fs = require('fs').promises;
 const multer = require('@koa/multer');
+const sharp = require('sharp');
 const {getVisitWord} = require("../../reports/visitWordReport");
 const User = mongoose.model('User')
 
@@ -17,8 +18,9 @@ const {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
-        const folder = req.body.folder || 'misc'; // Default to 'misc' if no folder specified
-        const uploadPath = path.join(__dirname, '../../../uploads', folder);
+        // Get folder from URL params instead of body
+        const folder = req.params.folder || 'misc';
+        const uploadPath = path.join('/usr/src/app/uploads', folder);
         
         try {
             await fs.mkdir(uploadPath, { recursive: true });
@@ -253,6 +255,30 @@ router.post('/migrate-files', isAuthenticated(), async ctx => {
     }
 });
 
+// Updated compression function to directly overwrite the original file
+async function compressImageIfNeeded(file) {
+    // Only compress if file is larger than 1.5MB and is an image
+    if (file.size > 1.5 * 1024 * 1024 && file.mimetype.startsWith('image/')) {
+        await sharp(file.path)
+            .resize(1920, 1080, {
+                fit: 'inside',
+                withoutEnlargement: true
+            })
+            .jpeg({ 
+                quality: 60,
+                force: false // maintains original format if not jpg
+            })
+            .toBuffer()
+            .then(async buffer => {
+                await fs.writeFile(file.path, buffer);
+                // Update file size
+                const stats = await fs.stat(file.path);
+                file.size = stats.size;
+            });
+    }
+    return file;
+}
+
 router.post('/upload/:folder', isAuthenticated(), upload.single('file'), async ctx => {
     try {
         const folder = ctx.params.folder;
@@ -267,11 +293,14 @@ router.post('/upload/:folder', isAuthenticated(), upload.single('file'), async c
             return;
         }
 
-        // Return the path that can be used to access the file
+        // Compress image if it's too large
+        compressImageIfNeeded(file);
+
         ctx.body = {
             status: 'success',
             message: 'File uploaded successfully',
-            filePath: `/api/files/${folder}/${file.filename}`
+            filePath: `/api/files/${folder}/${file.filename}`,
+            size: file.size // Added size to response
         };
 
     } catch (err) {
