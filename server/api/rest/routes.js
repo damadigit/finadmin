@@ -18,9 +18,11 @@ const {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
-        // Get folder from URL params instead of body
-        const folder = req.params.folder || 'misc';
-        const uploadPath = path.join('/usr/src/app/uploads', folder);
+        // Extract folder from URL path
+        const urlPath = req.url.split('/');
+        const folder = urlPath[urlPath.length - 1] || 'misc';
+        
+        const uploadPath = path.join(__dirname, '../../../uploads', folder);
         
         try {
             await fs.mkdir(uploadPath, { recursive: true });
@@ -279,7 +281,7 @@ async function compressImageIfNeeded(file) {
     return file;
 }
 
-router.post('/upload/:folder', isAuthenticated(), upload.single('file'), async ctx => {
+router.post('/upload/:folder',  upload.single('file'), async ctx => {
     try {
         const folder = ctx.params.folder;
         const file = ctx.request.file;
