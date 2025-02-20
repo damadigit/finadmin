@@ -214,20 +214,20 @@ router.post('/migrate-files', isAuthenticated(), async ctx => {
             await visit.save();
         }
 
-        // Update Posts
+        // Update Posts - corrected to use 'files' instead of 'attachments'
         const Post = mongoose.model('Post');
         const posts = await Post.find({
-            'attachments.filePath': { $regex: 'cloudinary' }
+            'files.filePath': { $regex: 'cloudinary' }
         });
 
         for (const post of posts) {
-            if (post.attachments && post.attachments.length > 0) {
-                post.attachments = post.attachments.map(attachment => {
-                    if (attachment.filePath && attachment.filePath.includes('cloudinary')) {
-                        const filename = attachment.filePath.split('/').pop();
-                        attachment.filePath = `/api/files/post_attachments/${filename}`;
+            if (post.files && post.files.length > 0) {
+                post.files = post.files.map(file => {
+                    if (file.filePath && file.filePath.includes('cloudinary')) {
+                        const filename = file.filePath.split('/').pop();
+                        file.filePath = `/api/files/post_attachments/${filename}`;
                     }
-                    return attachment;
+                    return file;
                 });
                 await post.save();
             }
