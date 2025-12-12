@@ -62,7 +62,7 @@ jobs:
           # Copy both .env and docker-compose-prod.yml to the server
           source: "./.env,./docker-compose-prod.yml"
           target: "~/.deploy/${{ github.event.repository.name }}/"
-      - name: Deploy via SSH
+      - name: Deploy via SSH 4
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             docker login -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }} ${{ secrets.REGISTRY }}
