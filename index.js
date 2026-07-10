@@ -8,7 +8,10 @@ const bodyParser = require('koa-bodyparser');
 const cors = require('@koa/cors');
 //console.log(process.env.MONGOLAB_URI)
 mongoose.connect( process.env.MONGOLAB_URI || 'mongodb+srv://finado:finadodo1!@cluster0.oufcv.mongodb.net/finadmin?retryWrites=true&w=majority', //'mongodb://127.0.0.1:27017/finadmin_db',
-    { useNewUrlParser: true } );
+ {useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log('DB Connected'))
+  .catch(err => console.error(err));
 
 mongoose.connection.once('open', () => {
     console.log('connected to database');
@@ -22,8 +25,8 @@ const schema = require('./server/api/graphql/schema');
 const {isAuthenticated} = require("./server/auth");
 async function StartServer() {
     const server = new ApolloServer({
-        schema, introspection: true,
-        playground: true,
+        schema, introspection: false,
+        playground: false,
         context: a => a
 
 
@@ -50,7 +53,7 @@ async function StartServer() {
         console.log(`🚀 Server ready at http://localhost:${port}${server.graphqlPath}`),
     );
 
-    await server.installSubscriptionHandlers(listener);
+    // await server.installSubscriptionHandlers(listener);
 }
 
 StartServer().catch(error => console.log(error));

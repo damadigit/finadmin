@@ -8,6 +8,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon index.js",
     "start": "node index.js",
+    "generate-schema": "node scripts/generateSchema.js",
     "deploy": "now",
     "deployProd": "now --public && now alias && now rm workcon_profile --safe --yes"
   },
