@@ -10,6 +10,7 @@ const AddressSchema =  new Schema({
     city: String,
     subcity:String,
     woreda: String,
+    area: String,
     houseNumber: String,
     locationText: String,
     gps:{
