@@ -1,22 +1,9 @@
 const { schemaComposer } = require('graphql-compose');
- const buildSchema  = require('./mongooseQL')
+const { GraphQLNonNull, GraphQLList, GraphQLString } = require('graphql');
+const mongoose = require('mongoose');
+const buildSchema  = require('./mongooseQL')
 
 const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
-
-// ApplicationModelTC.addFields( {
-//      fullName:
-//          { // set `id` name for new field
-//           type: 'String', // set type MongoID
-//           resolve: (source) => `${source.name} ${source.fatherName}`, // write resolve method, which returns _id value for the current field
-//           projection: { name: true, fatherName: true }, // add information, that need to reques _id field from database, when you request `id` field
-//          },
-//      age:
-//          { // set `id` name for new field
-//           type: 'Int', // set type MongoID
-//           resolve: (source) => new Date().getFullYear() - new Date(source.birthDate).getFullYear(), // write resolve method, which returns _id value for the current field
-//           projection: { birthDate: true }, // add information, that need to reques _id field from database, when you request `id` field
-//          }
-//
 //     }
 //
 // );
@@ -66,6 +53,25 @@ VisitModelTC.addFields({
 //     itemRemoveOne: ItemTC.getResolver('removeOne'),
 //     itemRemoveMany: ItemTC.getResolver('removeMany'),
 // });
+
+const RecordModel = mongoose.model('Record');
+
+schemaComposer.Query.addFields({
+    uniqueRecordAreas: {
+        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+        resolve: async () => {
+            const result = await RecordModel.distinct('place.address.area');
+            return result.filter(Boolean).sort();
+        },
+    },
+    uniqueRecordSubcities: {
+        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+        resolve: async () => {
+            const result = await RecordModel.distinct('place.address.subcity');
+            return result.filter(Boolean).sort();
+        },
+    },
+});
 
 const graphqlSchema = schemaComposer.buildSchema();
 module.exports = graphqlSchema;
