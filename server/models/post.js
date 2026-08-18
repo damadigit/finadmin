@@ -10,7 +10,10 @@ const PostSchema = new Schema({
     },
     recordId: { type: Schema.Types.ObjectId, ref: 'Record' },
     body: String,
-    title: String,
+    title: {
+        type: String,
+        index: true
+    },
     type:String,
     files: [FileSchema]
 
