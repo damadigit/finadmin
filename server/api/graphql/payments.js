@@ -1,10 +1,17 @@
 const {
-    GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLString, GraphQLInt,
+    GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLString, GraphQLInt, GraphQLBoolean,
+    GraphQLInputObjectType,
 } = require('graphql');
 const mongoose = require('mongoose');
 const { assertFinance } = require('../../auth/requireFinance');
 const SetMonthlyAllowanceInput = require('./schemas/setAllowanceInput');
 const SetAccountHolderInput = require('./schemas/setAccountHolderInput');
+const { monthLabel, buildRows, annotateDrift } = require('../../payments/monthGeneration');
+
+const GeneratePeriodInput = new GraphQLInputObjectType({
+    name: 'GeneratePaymentPeriodInput',
+    fields: { month: { type: GraphQLString } },
+});
 
 // Payments data lives on the beneficiary, but is deliberately unreachable through
 // the ordinary Record operations: Record is not finance-guarded, so exposing the
@@ -81,8 +88,73 @@ const AccountHolderResultType = new GraphQLObjectType({
     }),
 });
 
+const PeriodResultType = new GraphQLObjectType({
+    name: 'GeneratePaymentPeriodPayload',
+    fields: () => ({
+        id: { type: GraphQLString },
+        month: { type: GraphQLString },
+        label: { type: GraphQLString },
+        status: { type: GraphQLString },
+        rowCount: { type: GraphQLInt },
+        untickableCount: { type: GraphQLInt },
+    }),
+});
+
+// Rows are read through this rather than off the model directly, because the
+// bank-detail drift flag has to be recomputed against the current state of each
+// account holder every time the month is opened.
+const PayoutRowType = new GraphQLObjectType({
+    name: 'PaymentPayoutRow',
+    fields: () => ({
+        record: { type: GraphQLString },
+        registrationId: { type: GraphQLString },
+        name: { type: GraphQLString },
+        fatherName: { type: GraphQLString },
+        amount: { type: GraphQLInt },
+        included: { type: GraphQLBoolean },
+        note: { type: GraphQLString },
+        accountHolderName: { type: GraphQLString },
+        bankName: { type: GraphQLString },
+        accountNumber: { type: GraphQLString },
+        blocked: { type: GraphQLString },
+        bankDetailsChanged: { type: GraphQLBoolean },
+    }),
+});
+
+const PaymentMonthType = new GraphQLObjectType({
+    name: 'PaymentMonth',
+    fields: () => ({
+        id: { type: GraphQLString },
+        month: { type: GraphQLString },
+        label: { type: GraphQLString },
+        status: { type: GraphQLString },
+        approvedAt: { type: GraphQLString },
+        paidAt: { type: GraphQLString },
+        rows: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PayoutRowType))) },
+    }),
+});
+
 module.exports = function registerPaymentFields(schemaComposer) {
     const Record = mongoose.model('Record');
+    const AccountHolder = mongoose.model('AccountHolder');
+    const PaymentPeriod = mongoose.model('PaymentPeriod');
+
+    // Loads the holders behind a set of rows and re-flags any whose bank details
+    // have been corrected since the month was generated.
+    const withDrift = async rows => {
+        const holderIds = [...new Set(rows.map(r => r.accountHolder).filter(Boolean).map(String))];
+        if (holderIds.length === 0) return annotateDrift(rows, {});
+
+        const holders = await AccountHolder.find({ _id: { $in: holderIds } }).lean();
+        const byHolderId = Object.fromEntries(holders.map(h => [String(h._id), h]));
+
+        const byRecordId = {};
+        rows.forEach(row => {
+            if (row.accountHolder) byRecordId[String(row.record)] = byHolderId[String(row.accountHolder)];
+        });
+
+        return annotateDrift(rows, byRecordId);
+    };
 
     const shapeProfile = record => {
         if (!record) return null;
@@ -132,9 +204,102 @@ module.exports = function registerPaymentFields(schemaComposer) {
                 return shapeProfile(record);
             },
         },
+
+        // Reading a month always recomputes the bank-detail drift, so finance
+        // sees a corrected account number as a discrepancy rather than having it
+        // silently applied to a month that may already have been paid.
+        paymentMonth: {
+            type: PaymentMonthType,
+            args: { month: { type: GraphQLNonNull(GraphQLString) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.month });
+                if (!period) {
+                    throw new Error('That month has not been generated.');
+                }
+
+                const rows = await withDrift((period.rows || []).map(r => r.toObject ? r.toObject() : r));
+
+                return {
+                    id: period._id.toString(),
+                    month: period.month,
+                    label: period.label,
+                    status: period.status,
+                    approvedAt: period.approvedAt ? period.approvedAt.toISOString() : null,
+                    paidAt: period.paidAt ? period.paidAt.toISOString() : null,
+                    rows: rows.map(row => ({
+                        ...row,
+                        bankName: row.bankAccount ? row.bankAccount.bankName : null,
+                        accountNumber: row.bankAccount ? row.bankAccount.accountNumber : null,
+                    })),
+                };
+            },
+        },
     });
 
     schemaComposer.Mutation.addFields({
+        generatePaymentPeriod: {
+            type: PeriodResultType,
+            args: { record: { type: new GraphQLNonNull(GeneratePeriodInput) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const month = args.record.month;
+                const label = monthLabel(month);
+                if (!label) {
+                    throw new Error(`"${month}" is not a month. Use the form 2026-08.`);
+                }
+
+                if (await PaymentPeriod.findOne({ month })) {
+                    throw new Error(`${label} has already been generated.`);
+                }
+
+                // Only pre-filter on the allowance; eligibility itself, including
+                // the discontinuation check, is decided by the pure rules.
+                const records = await Record.find({ monthlyAllowance: { $gt: 0 } }).lean();
+
+                // String(undefined) is the string "undefined", which would sail through a
+                // truthiness check and fail as an ObjectId further down, so
+                // unlinked records have to be dropped before converting.
+                const holderIds = [...new Set(
+                    records.map(r => (r.accountHolder ? String(r.accountHolder) : null)).filter(Boolean)
+                )];
+                const holders = holderIds.length
+                    ? await AccountHolder.find({ _id: { $in: holderIds } }).lean()
+                    : [];
+                const byHolderId = Object.fromEntries(holders.map(h => [String(h._id), h]));
+
+                const holdersByRecordId = {};
+                records.forEach(record => {
+                    if (record.accountHolder) {
+                        holdersByRecordId[String(record._id)] = byHolderId[String(record.accountHolder)];
+                    }
+                });
+
+                const rows = buildRows(records, holdersByRecordId);
+
+                const user = context.ctx.state.user;
+                const period = await PaymentPeriod.create({
+                    month,
+                    label,
+                    status: 'Draft',
+                    rows,
+                    createdBy: user._id,
+                    modifiedBy: user._id,
+                });
+
+                return {
+                    id: period._id.toString(),
+                    month: period.month,
+                    label: period.label,
+                    status: period.status,
+                    rowCount: rows.length,
+                    untickableCount: rows.filter(r => r.blocked).length,
+                };
+            },
+        },
+
         // The only way the standing allowance changes. Writing it through the
         // ordinary record update would bypass both the role check and the
         // history, and either of those is enough to make the number untrustworthy.

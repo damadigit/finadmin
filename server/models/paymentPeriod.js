@@ -1,6 +1,51 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
+// The receiving bank account, frozen into the row at generation. `blocked`
+// records why a row cannot be ticked; an untickable row blocks approval, so it
+// must never be confused with one that was simply left alone.
+const PayoutRowSchema = new Schema({
+    record: { type: Schema.Types.ObjectId, ref: 'Record' },
+    // Snapshot of the beneficiary's identity, so a month still reads correctly
+    // if the beneficiary is renamed or discontinued afterwards.
+    registrationId: String,
+    name: String,
+    fatherName: String,
+
+    // Snapshot of the standing allowance, adjustable for this month alone.
+    amount: {
+        type: Number,
+        validate: {
+            validator: v => v === undefined || v === null || Number.isInteger(v),
+            message: 'A monthly amount must be a whole number of birr.'
+        }
+    },
+
+    // The tick. The note beside it means different things either way: on a
+    // ticked row it reaches the bank, on an unticked one it records why.
+    included: { type: Boolean, default: true },
+    note: String,
+
+    accountHolder: { type: Schema.Types.ObjectId, ref: 'AccountHolder' },
+    accountHolderName: String,
+    bankAccount: {
+        bankName: String,
+        accountNumber: String
+    },
+
+    blocked: String,
+    bankDetailsChanged: { type: Boolean, default: false },
+}, { _id: false });
+
+// Every export taken for this month, kept even after a reopen marks them
+// superseded, so there is an answer to "which file went to the bank, and when".
+const ExportSchema = new Schema({
+    bankName: String,
+    exportedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    exportedAt: { type: Date, default: Date.now },
+    superseded: { type: Boolean, default: false },
+}, { _id: false });
+
 // One document per payment month. The payout rows live inside it rather than in
 // their own collection: the month is the unit finance works in, the rows are only
 // ever read and written alongside it, and approving a month is then a single
@@ -23,6 +68,8 @@ const PaymentPeriodSchema = new Schema({
         enum: ['Draft', 'Approved', 'Paid'],
         default: 'Draft'
     },
+    rows: [PayoutRowSchema],
+    exports: [ExportSchema],
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
     reopenedBy: { type: Schema.Types.ObjectId, ref: 'User' },
