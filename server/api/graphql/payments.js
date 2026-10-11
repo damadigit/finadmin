@@ -290,7 +290,11 @@ module.exports = function registerPaymentFields(schemaComposer) {
                 amount: entry.amount,
                 previousAmount: entry.previousAmount,
                 note: entry.note || null,
-                changedBy: entry.changedBy ? entry.changedBy.toString() : null,
+                // Populated, so prefer the email finance can read; fall back to
+                // the id only if the user was somehow not resolved.
+                changedBy: entry.changedBy
+                    ? (entry.changedBy.email || entry.changedBy.toString())
+                    : null,
                 changedAt: entry.changedAt,
             })),
         };
