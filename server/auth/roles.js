@@ -41,25 +41,23 @@ function hasAdminRole(user) {
 // Who may manage users: create accounts, assign roles, delete accounts.
 //
 // This is a third boundary, not an extension of the one above. 'admin' decides
-// what may be done with beneficiary records; super-admin decides who else is
+// what may be done with beneficiary records; superAdmin decides who else is
 // trusted at all. Keeping them apart is what stops an administrator from minting
 // an administrator, and it is why the role split was worth making before the
 // page existed rather than after.
 //
-// 'admin' is in this list TEMPORARILY and must be removed once a super-admin
-// account exists. Until then nobody holds the role that is supposed to own user
-// management, so administrators are admitted alongside it to make the handover
-// possible - an administrator uses the new Users page to promote themselves to
-// superAdmin, and only then is this list narrowed to ['superAdmin'].
-//
-// Nothing fails if that never happens. The page works, the tests pass, and the
-// two roles are indistinguishable. The entry is only visible to someone reading
-// it, so remove it deliberately rather than at the end of a feature.
+// The handover is closed. This list briefly also carried 'admin', because no
+// superAdmin account existed yet and without one nobody could reach the page
+// that appoints the first. A superAdmin now exists, so an administrator is once
+// again refused here - which is the whole point of the split. If this ever has
+// to be reopened, admit 'admin' again, appoint a superAdmin, then take it back
+// out; do not leave it in, because with both admitted the two roles are
+// indistinguishable and nothing fails to say so.
 //
 // The matching client-side condition is canManageUsers in
 // finadmin_ui/src/helpers/roles.js - NOT App.js, which only calls it. Both must
 // be changed together.
-const USER_MANAGEMENT_ROLES = ['superAdmin', 'admin'];
+const USER_MANAGEMENT_ROLES = ['superAdmin'];
 
 function hasUserManagementRole(user) {
     const roles = (user && user.roles) || [];

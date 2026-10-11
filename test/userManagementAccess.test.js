@@ -7,19 +7,20 @@ const verifies = (user, password) => new Promise((resolve, reject) => {
     user.comparePassword(password, (err, isMatch) => (err ? reject(err) : resolve(isMatch)));
 });
 
-// Roles that are outside the user-management boundary. Unchanged by the
-// introduction of superAdmin: the finance split and the account split are
-// independent, and a new role at the top of the account boundary does not widen
-// any of these.
+// Roles that are outside the user-management boundary.
+//
+// 'admin' is in here. It was briefly admitted while the handover was open - no
+// superAdmin account existed, and without one nobody could reach the page that
+// appoints the first. A superAdmin now exists, so an administrator is refused
+// again. That is the whole point of the split: an administrator decides what
+// happens to beneficiary records, not who else is trusted.
 const NON_USER_MANAGEMENT_ROLES = [
-    'handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin',
+    'admin', 'handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin',
 ];
 
-// 'admin' is admitted while the handover in server/auth/roles.js is open, because
-// no super-admin account exists yet and nobody would otherwise be able to
-// appoint one. It is asserted here as ALLOWED, not merely omitted from the list
-// above, so that removing it from USER_MANAGEMENT_ROLES breaks a test rather
-// than passing unnoticed.
+// The handover, and its ending, in one place. The boundary is a single constant
+// on each side of the repository, so if 'admin' is ever re-admitted this file is
+// what says so out loud.
 describe('user management', () => {
     let schema;
     let User;
@@ -150,48 +151,52 @@ describe('user management', () => {
             expect(data.setUserRoles.roles).toEqual(['finance']);
         });
 
-        // This is the whole reason the handover exists. It fails when the
-        // temporary 'admin' entry is dropped from USER_MANAGEMENT_ROLES, which
-        // is the point - that change should be deliberate.
-        it('allows an administrator only while the handover is open', async () => {
+        // The handover is closed. An administrator reaching user management
+        // again would mean the boundary had been reopened, so this asserts the
+        // refusal rather than leaving it to the loop above, which would pass
+        // just as happily if 'admin' were quietly dropped from the list.
+        it('refuses an administrator now the handover is closed', async () => {
             const admin = await createUser({ roles: ['admin'] });
 
             await expect(
                 gql.run(schema, '{ allUsers { id email } }', { user: admin })
-            ).resolves.toBeTruthy();
+            ).rejects.toThrow(/Forbidden/);
+
+            await expect(
+                gql.run(schema, createAccount, {
+                    user: admin,
+                    variables: { email: 'by-admin@example.com', password: 'a-long-enough-one' },
+                })
+            ).rejects.toThrow(/Forbidden/);
         });
     });
 
     // Granting super-admin is itself a user-management action. Strip it from
     // every account and nobody is left who can put it back - the feature that
     // repairs it is the feature that was switched off.
+    //
+    // On the setUserRoles path the count rule is now unreachable, and it is worth
+    // saying why rather than pretending otherwise: to remove superAdmin from a
+    // target the caller must be a superAdmin other than the target (self-demotion
+    // is refused first), so a second superAdmin necessarily exists and the count
+    // can never reach zero. The rule is kept as a second line of defence for any
+    // future relaxation of self-demotion, and it is unit-tested directly in
+    // test/roleLifecycle.test.js. What is tested here is what a caller can
+    // actually reach.
     describe('the last super-admin', () => {
-        it('refuses to demote the only super-admin', async () => {
-            const superAdmin = await createUser({ roles: ['superAdmin'] });
+        it('lets a super-admin demote another while one remains', async () => {
+            const actor = await createUser({ roles: ['superAdmin'] });
             const other = await createUser({ roles: ['superAdmin'], email: 'second@example.com' });
 
-            // The actor is an administrator, not a super-admin, so that self
-            // demotion does not fire first and mask the count rule under test.
-            const actor = await createUser({ roles: ['admin'], email: 'boss@example.com' });
-
-            // First demotion is fine - a second super-admin remains.
-            await expect(
-                gql.run(schema, setRoles, {
-                    user: other,
-                    variables: { userId: String(superAdmin._id), roles: ['admin'] },
-                })
-            ).resolves.toBeTruthy();
-
-            // The second is not.
             await expect(
                 gql.run(schema, setRoles, {
                     user: actor,
                     variables: { userId: String(other._id), roles: ['admin'] },
                 })
-            ).rejects.toThrow(/Appoint another super-admin/);
+            ).resolves.toBeTruthy();
 
-            const unchanged = await User.findById(other._id);
-            expect(Array.from(unchanged.roles)).toEqual(['superAdmin']);
+            const demoted = await User.findById(other._id);
+            expect(Array.from(demoted.roles)).toEqual(['admin']);
         });
 
         it('refuses to delete the only super-admin', async () => {

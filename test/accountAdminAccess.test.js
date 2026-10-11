@@ -2,13 +2,16 @@ const db = require('./helpers/db');
 const gql = require('./helpers/graphql');
 const { createUser } = require('./helpers/factories');
 
-const NON_ADMIN_ROLES = ['handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin'];
+const NON_ADMIN_ROLES = ['admin', 'handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin'];
 
-// Every role that is not an administrator, including the finance roles.
+// Every role that is not a super-admin, including the finance roles and, since
+// the handover closed, the administrator role.
 //
-// The finance boundary and the account boundary are separate on purpose. A
-// payment role is trusted with bank details and allowances; being trusted with
-// those does not make somebody the person who decides who else is trusted.
+// The finance boundary and the user-management boundary are separate on purpose.
+// A payment role is trusted with bank details and allowances; being trusted with
+// those does not make somebody the person who decides who else is trusted. The
+// same reasoning is why 'admin' is here: deciding what happens to beneficiary
+// records is not deciding who else is trusted.
 describe('account administration', () => {
     let schema;
 
@@ -81,8 +84,8 @@ describe('account administration', () => {
             }
         });
 
-        it('allows an administrator', async () => {
-            const user = await createUser({ roles: ['admin'] });
+        it('allows a super-admin', async () => {
+            const user = await createUser({ roles: ['superAdmin'] });
             await expect(gql.run(schema, '{ allUsers { id email } }', { user })).resolves.toBeTruthy();
         });
     });
@@ -99,12 +102,12 @@ describe('account administration', () => {
             }
         });
 
-        it('allows an administrator to change an email', async () => {
-            const admin = await createUser({ roles: ['admin'] });
+        it('allows a super-admin to change an email', async () => {
+            const superAdmin = await createUser({ roles: ['superAdmin'] });
             const applicant = await createUser({ roles: ['handler'], email: 'applicant@example.com' });
 
             const data = await gql.run(schema, writes[0].mutation, {
-                user: admin,
+                user: superAdmin,
                 variables: { record: { _id: String(applicant._id), email: 'renamed@example.com' } },
             });
 
@@ -204,32 +207,32 @@ describe('account administration', () => {
             expect(Object.keys(schema.getType('User').getFields())).not.toContain('password');
         });
 
-        it('cannot be read by any caller, administrator included', async () => {
-            const admin = await createUser({ roles: ['admin'] });
+        it('cannot be read by any caller, super-admin included', async () => {
+            const superAdmin = await createUser({ roles: ['superAdmin'] });
 
             await expect(
-                gql.run(schema, '{ allUsers { email password } }', { user: admin })
+                gql.run(schema, '{ allUsers { email password } }', { user: superAdmin })
             ).rejects.toThrow(/Cannot query field "password"/);
 
             await expect(
                 gql.run(schema,
                     'query($id: MongoID!) { oneUser(filter: { _id: $id }) { password } }',
-                    { user: admin, variables: { id: String(admin._id) } }
+                    { user: superAdmin, variables: { id: String(superAdmin._id) } }
                 )
             ).rejects.toThrow(/Cannot query field "password"/);
         });
 
         it('cannot be written through any user input', async () => {
-            const admin = await createUser({ roles: ['admin'] });
+            const superAdmin = await createUser({ roles: ['superAdmin'] });
 
-            // Setting a password here would let an administrator, or anyone who
-            // reached this before the guard existed, choose a new credential for
-            // an account. Passwords are set at registration and by an explicit
-            // password change, which hashes them.
+            // Setting a password here would let anyone with user management, or
+            // anyone who reached this before the guard existed, choose a new
+            // credential for an account. Passwords are set at registration and by
+            // an explicit password change, which hashes them.
             await expect(
                 gql.run(schema,
                     'mutation($r: UpdateByIdUserInput!) { updateUser(record: $r) { record { id } } }',
-                    { user: admin, variables: { r: { _id: String(admin._id), password: 'chosen-by-caller' } } }
+                    { user: superAdmin, variables: { r: { _id: String(superAdmin._id), password: 'chosen-by-caller' } } }
                 )
             ).rejects.toThrow(/password/);
         });
