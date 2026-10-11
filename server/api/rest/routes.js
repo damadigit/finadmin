@@ -44,38 +44,46 @@ const upload = multer({
     }
 });
 
+// Roles are deliberately not read from the request body. Honouring them let
+// anyone register as an admin; with the finance roles added, it would have let
+// anyone register their way into reading beneficiary bank details. Accounts are
+// created out of band and roles are assigned administratively, so a
+// self-registered user always gets the least privileged role.
+const SELF_REGISTERED_ROLE = 'handler';
+
 async function register(ctx, next) {
-    const { email, password, roles } = ctx.request.body;
+    const { email, password } = ctx.request.body;
 
-    // TODO - improve validation
-    if ( email && password && roles) {
-        let user = await User.findOne({ email });
-
-        if (!user) {
-            user = new User({
-                email,
-                password,
-                roles
-            });
-
-            // TODO handle password
-
-            await user.save();
-
-            ctx.state = {
-                user: user._id,
-                roles: user.roles
-            };
-
-            await next();
-        } else {
-            ctx.status = 400;
-            ctx.body = { status: 'error', message: 'E-mail already registered' };
-        }
-    } else {
+    if (!email || !password) {
         ctx.status = 400;
         ctx.body = { status: 'error', message: 'Invalid email or password' };
+        return;
     }
+
+    const existing = await User.findOne({ email });
+
+    if (existing) {
+        ctx.status = 400;
+        ctx.body = { status: 'error', message: 'E-mail already registered' };
+        return;
+    }
+
+    const user = new User({
+        email,
+        password,
+        roles: [SELF_REGISTERED_ROLE]
+    });
+
+    // TODO handle password
+
+    await user.save();
+
+    ctx.state = {
+        user: user._id,
+        roles: user.roles
+    };
+
+    await next();
 }
 
 const router = new Router({ prefix: '/api' });
