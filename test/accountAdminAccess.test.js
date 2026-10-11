@@ -1,0 +1,221 @@
+const db = require('./helpers/db');
+const gql = require('./helpers/graphql');
+const { createUser } = require('./helpers/factories');
+
+const NON_ADMIN_ROLES = ['handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin'];
+
+// Every role that is not an administrator, including the finance roles.
+//
+// The finance boundary and the account boundary are separate on purpose. A
+// payment role is trusted with bank details and allowances; being trusted with
+// those does not make somebody the person who decides who else is trusted.
+describe('account administration', () => {
+    let schema;
+
+    beforeAll(async () => {
+        await db.connect();
+        db.loadModels();
+        schema = db.getSchema();
+    });
+
+    afterAll(async () => {
+        await db.disconnect();
+    });
+
+    beforeEach(async () => {
+        await db.clearDatabase();
+    });
+
+    const reads = [
+        '{ allUsers { id email } }',
+        '{ _allUsersMeta { count } }',
+        '{ oneUser(filter: { email: "anyone@example.com" }) { id } }',
+    ];
+
+    const writes = [
+        {
+            mutation: `
+                mutation updateUser($record: UpdateByIdUserInput!) {
+                    updateUser(record: $record) { record { id roles } }
+                }
+            `,
+            variables: { record: { _id: '507f1f77bcf86cd799439011', roles: ['admin'] } },
+        },
+        {
+            mutation: `
+                mutation deleteUser($_id: MongoID!) {
+                    deleteUser(_id: $_id) { recordId }
+                }
+            `,
+            variables: { _id: '507f1f77bcf86cd799439011' },
+        },
+        {
+            mutation: `
+                mutation updateOneUser($filter: FilterUpdateOneUserInput!, $record: UpdateOneUserInput!) {
+                    updateOneUser(filter: $filter, record: $record) { record { id } }
+                }
+            `,
+            variables: { filter: { email: 'someone@example.com' }, record: { roles: ['admin'] } },
+        },
+    ];
+
+    describe('reads', () => {
+        it('refuses every role outside the admin boundary', async () => {
+            for (const role of NON_ADMIN_ROLES) {
+                const user = await createUser({ roles: [role] });
+                for (const query of reads) {
+                    await expect(gql.run(schema, query, { user })).rejects.toThrow(/Forbidden/);
+                }
+            }
+        });
+
+        it('refuses an unauthenticated caller', async () => {
+            for (const query of reads) {
+                await expect(gql.run(schema, query)).rejects.toThrow(/Forbidden/);
+            }
+        });
+
+        it('allows an administrator', async () => {
+            const user = await createUser({ roles: ['admin'] });
+            await expect(gql.run(schema, '{ allUsers { id email } }', { user })).resolves.toBeTruthy();
+        });
+    });
+
+    describe('writes', () => {
+        it('refuses every role outside the admin boundary', async () => {
+            for (const role of NON_ADMIN_ROLES) {
+                const user = await createUser({ roles: [role] });
+                for (const { mutation, variables } of writes) {
+                    await expect(
+                        gql.run(schema, mutation, { user, variables })
+                    ).rejects.toThrow(/Forbidden/);
+                }
+            }
+        });
+
+        it('allows an administrator to grant and change roles', async () => {
+            const admin = await createUser({ roles: ['admin'] });
+            const applicant = await createUser({ roles: ['handler'], email: 'applicant@example.com' });
+
+            const data = await gql.run(schema, writes[0].mutation, {
+                user: admin,
+                variables: { record: { _id: String(applicant._id), roles: ['finance'] } },
+            });
+
+            expect(data.updateUser.record.roles).toEqual(['finance']);
+        });
+    });
+
+    // Account creation stays on the registration path, which hashes the password
+    // and assigns the least privileged role. It used to be a GraphQL mutation too,
+    // reachable by anyone, which meant anyone could mint an account with any role
+    // in a single request.
+    describe('account creation', () => {
+        it('offers no way to create an account with a chosen password', () => {
+            const mutations = Object.keys(schema.getMutationType().getFields());
+
+            expect(mutations).not.toContain('createUser');
+            expect(mutations).not.toContain('createManyUser');
+        });
+    });
+
+    // The specific abuse this guard exists to stop. Composed unguarded, these
+    // three calls were enough to take over the installation from a low-privilege
+    // account, and a role change made that way is invisible to every other guard
+    // in the system because the attacker is now legitimately a financeAdmin.
+    describe('escalation', () => {
+        it('stops a user promoting their own roles', async () => {
+            const attacker = await createUser({ roles: ['handler'], email: 'attacker@example.com' });
+
+            await expect(
+                gql.run(schema, writes[0].mutation, {
+                    user: attacker,
+                    variables: { record: { _id: String(attacker._id), roles: ['financeAdmin'] } },
+                })
+            ).rejects.toThrow(/Forbidden/);
+
+            const unchanged = await db.mongoose.model('User').findById(attacker._id);
+            expect(Array.from(unchanged.roles)).toEqual(['handler']);
+        });
+
+        it('stops a user rewriting another account', async () => {
+            const attacker = await createUser({ roles: ['handler'], email: 'attacker@example.com' });
+            const victim = await createUser({ roles: ['financeAdmin'], email: 'boss@example.com' });
+            const victimBefore = await db.mongoose.model('User').findById(victim._id).select('+password');
+
+            await expect(
+                gql.run(schema, writes[2].mutation, {
+                    user: attacker,
+                    variables: { filter: { email: 'boss@example.com' }, record: { roles: ['handler'] } },
+                })
+            ).rejects.toThrow(/Forbidden/);
+
+            const victimAfter = await db.mongoose.model('User').findById(victim._id).select('+password');
+            expect(Array.from(victimAfter.roles)).toEqual(['financeAdmin']);
+            expect(victimAfter.password).toBe(victimBefore.password);
+        });
+
+        it('stops a user deleting an administrator', async () => {
+            const attacker = await createUser({ roles: ['handler'], email: 'attacker@example.com' });
+            await createUser({ roles: ['admin'], email: 'boss@example.com' });
+
+            await expect(
+                gql.run(schema, writes[1].mutation, {
+                    user: attacker,
+                    variables: { _id: '507f1f77bcf86cd799439011' },
+                })
+            ).rejects.toThrow(/Forbidden/);
+
+            expect(await db.mongoose.model('User').countDocuments({ email: 'boss@example.com' })).toBe(1);
+        });
+    });
+
+    // Two distinct problems, one field. Reading the hash hands an attacker every
+    // account to crack offline; writing it is account takeover whether or not
+    // they can read anything.
+    describe('the password field', () => {
+        it('is not on the User type at all', () => {
+            expect(Object.keys(schema.getType('User').getFields())).not.toContain('password');
+        });
+
+        it('cannot be read by any caller, administrator included', async () => {
+            const admin = await createUser({ roles: ['admin'] });
+
+            await expect(
+                gql.run(schema, '{ allUsers { email password } }', { user: admin })
+            ).rejects.toThrow(/Cannot query field "password"/);
+
+            await expect(
+                gql.run(schema,
+                    'query($id: MongoID!) { oneUser(filter: { _id: $id }) { password } }',
+                    { user: admin, variables: { id: String(admin._id) } }
+                )
+            ).rejects.toThrow(/Cannot query field "password"/);
+        });
+
+        it('cannot be written through any user input', async () => {
+            const admin = await createUser({ roles: ['admin'] });
+
+            // Setting a password here would let an administrator, or anyone who
+            // reached this before the guard existed, choose a new credential for
+            // an account. Passwords are set at registration and by an explicit
+            // password change, which hashes them.
+            await expect(
+                gql.run(schema,
+                    'mutation($r: UpdateByIdUserInput!) { updateUser(record: $r) { record { id } } }',
+                    { user: admin, variables: { r: { _id: String(admin._id), password: 'chosen-by-caller' } } }
+                )
+            ).rejects.toThrow(/password/);
+        });
+    });
+
+    it('leaves the rest of the application alone', async () => {
+        // A guard on accounts must not stop finance doing finance, or the
+        // payments feature would depend on holding the admin role as well.
+        const finance = await createUser({ roles: ['financeAdmin'] });
+
+        await expect(
+            gql.run(schema, '{ allAccountHolders { id } }', { user: finance })
+        ).resolves.toBeTruthy();
+    });
+});

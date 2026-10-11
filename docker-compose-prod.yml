@@ -13,7 +13,22 @@ services:
     environment:
       - TZ=Africa/Nairobi
       - NODE_ENV=production
-      - DATABASE_URL=mongodb://finadmin_db:27017/finadmin_db
+      # The application reads MONGOLAB_URI. This file set DATABASE_URL, which
+      # nothing read, so the container silently connected to the connection
+      # string that was hardcoded in the source instead - which meant the local
+      # mongo service below was started and never used. Renamed to match.
+      - MONGOLAB_URI=${MONGOLAB_URI:?set MONGOLAB_URI to this environment's database, e.g. mongodb://finadmin_db:27017/finadmin_db}
+      # Signs and verifies login tokens. Required: the server refuses to start
+      # in production without it rather than fall back to a known value.
+      #
+      # Generate one with:
+      #   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
+      # Verification-only. Set this to the *previous* secret to keep tokens that
+      # were already issued working, so a rotation does not sign everybody out.
+      # Unset it once the longest plausible session has passed.
+      - JWT_LEGACY_SECRET=${JWT_LEGACY_SECRET:-}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-12h}
   finadmin_db:
     restart: always
     image: mongo

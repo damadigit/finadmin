@@ -13,9 +13,38 @@ env:
   TAG_COMMIT: ${{ secrets.REGISTRY_IMAGE }}:${{ github.sha }}
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # The integration tests boot a real mongod; caching it saves a ~100MB
+      # download on every run.
+      - name: Cache MongoDB binary
+        uses: actions/cache@v3
+        with:
+          path: node_modules/.cache/mongodb-memory-server
+          key: mongod-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
+      - name: Run tests
+        run: yarn test
+
   publish:
     name: Build and Publish Docker Image
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Checkout code
@@ -49,8 +78,19 @@ jobs:
 
       - name: add environment file
         run: |
-          echo "TAG_COMMIT=${{ env.TAG_COMMIT }}" >> .env
-          echo "NODE_ENV=production" >> .env
+          # Written with a quoted heredoc, not echo. A database password may
+          # contain a backtick or a $, and echo would execute the first and
+          # expand the second, silently corrupting the credential.
+          cat >> .env <<'CONFIG'
+          TAG_COMMIT=${{ env.TAG_COMMIT }}
+          NODE_ENV=production
+          # The application refuses to start without these two. It previously
+          # fell back to a database URI committed in the source and to a
+          # well-known signing secret; both are gone.
+          MONGOLAB_URI=${{ secrets.MONGOLAB_URI }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES_IN=12h
+          CONFIG
 #          scp -o StrictHostKeyChecking=no .env ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:~/
       # Use appleboy/scp-action to securely copy both .env and docker-compose-prod.yml
       - name: Copy files via SCP

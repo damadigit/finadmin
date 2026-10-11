@@ -11,9 +11,126 @@ const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
 const {ModelTC:RecordModelTC} = buildSchema('Record',schemaComposer);
 const {ModelTC:VisitModelTC}  = buildSchema('Visit',schemaComposer);
 const {ModelTC:PostModelTC}  = buildSchema('Post',schemaComposer);
-buildSchema('User',schemaComposer);
+
+// Payment side of the system. AccountHolder is reachable from a beneficiary's
+// payments panel, so it is composed here alongside the rest.
+//
+// Both are guarded in the resolver, not just hidden in the interface: these are
+// the first models in the application that a role can be refused access to.
+const requireFinance = require('../../auth/requireFinance');
+const requireAdmin = require('../../auth/requireAdmin');
+
+// Accounts are the root of the permission model, so they are guarded rather than
+// composed open. Composed without a guard, this single line let any signed-in
+// user - a handler with no other powers - rewrite their own roles to financeAdmin,
+// rewrite anyone else's password, and delete accounts outright. The guard is
+// applied here rather than on the payments models because escalation defeats
+// those guards: a user who can edit a user can grant themselves a role that gets
+// past every one of them.
+const {ModelTC:UserModelTC} = buildSchema('User',schemaComposer, { guards: [requireAdmin] });
+
+// The password hash is removed from the User type and from every input that
+// carries it.
+//
+// Two separate problems, one field. Reading it hands an attacker every account's
+// hash to crack offline. Writing it lets the same attacker choose a new password
+// for any account, which is account takeover whether or not they can read
+// anything. Neither is reachable through the interface once the field is absent,
+// so this is not a hiding of the UI but the removal of the capability itself.
+const PASSWORD = 'password';
+
+const userInputTypes = [
+    'CreateOneUserInput', 'CreateManyUserInput',
+    'UpdateByIdUserInput', 'UpdateOneUserInput', 'UpdateManyUserInput',
+    'FilterUpdateOneUserInput', 'FilterUpdateManyUserInput',
+    'FilterFindOneUserInput', 'FilterRemoveOneUserInput', 'FilterRemoveManyUserInput',
+];
+
+[UserModelTC, ...userInputTypes.map(name => schemaComposer.getAnyTC(name))]
+    .filter(Boolean)
+    .forEach(type => {
+        if (type.getField(PASSWORD)) {
+            type.removeField(PASSWORD);
+        }
+    });
+
+// With password gone from the inputs, the composed create mutations can no longer
+// produce a valid account: the model requires a password, so createUser would fail
+// for every caller including an administrator. Rather than leave a mutation that
+// only ever errors, it is removed.
+//
+// Accounts are created through registration, which hashes the password server-side
+// and assigns the least privileged role, and roles are then granted
+// administratively through updateUser. That is the same path self-registration
+// already takes, so no capability is lost - a caller simply cannot now invent an
+// account with a password of their choosing in one request.
+schemaComposer.Mutation.removeField('createUser');
+schemaComposer.Mutation.removeField('createManyUser');
+
+// An account holder that is still linked to a beneficiary cannot be deleted:
+// the link is what a payment is made against, and silently dropping it would
+// turn a paid beneficiary into an unexplained gap in the next month.
+const refuseDeleteOfLinkedHolder = async (args) => {
+    const query = args._id ? { _id: args._id } : args.filter;
+    if (!query) return;
+
+    const ids = (await mongoose.model('AccountHolder').find(query).select('_id')).map(d => d._id);
+    if (ids.length === 0) return;
+
+    const linked = await mongoose.model('Record').countDocuments({ accountHolder: { $in: ids } });
+
+    if (linked > 0) {
+        throw new Error(
+            `Cannot delete: ${linked} beneficiary record(s) are still linked to this account holder. Detach them first.`
+        );
+    }
+};
+
+const {ModelTC:AccountHolderModelTC} = buildSchema('AccountHolder', schemaComposer, {
+    guards: [requireFinance],
+    deleteGuard: refuseDeleteOfLinkedHolder,
+});
+const {ModelTC:PaymentPeriodModelTC} = buildSchema('PaymentPeriod', schemaComposer, { guards: [requireFinance] });
+
+// The allowance is removed from the Record type entirely - output and inputs.
+// Record is readable and writable by every role, so leaving the amount on the
+// type would tell handlers and sponsors what each beneficiary is paid, and
+// leaving it on the inputs would let an admin rewrite it without any history
+// entry. The finance-guarded payment operations are the only route to it.
+['monthlyAllowance', 'allowanceHistory'].forEach(field => RecordModelTC.removeField(field));
+
+// accountHolder stays readable as a bare id - an id on its own says nothing
+// about anyone's money, and the payments panel needs it to know who is linked -
+// but it is not settable here. Linking is a finance action and goes through the
+// guarded mutation, so an admin cannot quietly re-point a beneficiary at a
+// different account.
+const RECORD_INPUTS_ONLY = ['monthlyAllowance', 'allowanceHistory', 'accountHolder'];
+
+// Input types are named after the model, so they can be reached by name once the
+// resolvers that use them have been built.
+RECORD_INPUTS_ONLY.forEach(field => {
+    ['CreateOneRecordInput', 'UpdateByIdRecordInput', 'UpdateOneRecordInput',
+        'FilterUpdateOneRecordInput', 'FilterFindOneRecordInput']
+        .map(name => schemaComposer.getAnyTC(name))
+        .filter(Boolean)
+        .forEach(type => {
+            if (type.getField(field)) {
+                type.removeField(field);
+            }
+        });
+});
+
+require('./payments')(schemaComposer);
 RecordModelTC.addFields({
- fullName: 'String'
+ fullName: 'String',
+ // Deliberately pinned to an id rather than the composed AccountHolder type.
+ // Record is not finance-guarded, so expanding the reference here would hand
+ // holder names and bank details to every role that can read a beneficiary.
+ // Without this line the exposed type would depend on whether AccountHolder was
+ // composed before or after Record, which is not something a security property
+ // should rest on. The frontend resolves the holder through the guarded
+ // AccountHolder operations instead.
+ accountHolder: 'MongoID',
 })
 
 ApplicationModelTC.addFields({

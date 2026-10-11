@@ -48,7 +48,12 @@ function generateToken() {
     if (user === false) {
       ctx.status = 401;
     } else {
-      const jwtToken = jwt.sign({ id: user, roles }, config.secret);
+      // Signed with the current secret only, and given an expiry. Tokens issued
+      // before the secret rotated stay valid through the legacy verification
+      // path in the JWT strategy; they are simply never minted again.
+      const jwtToken = jwt.sign({ id: user, roles }, config.secret, {
+        expiresIn: config.expiresIn,
+      });
       const token =  jwtToken//`JWT ${jwtToken}`;
 
       const currentUser = await User.findOne({ _id: user });
