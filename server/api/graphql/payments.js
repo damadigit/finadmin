@@ -6,11 +6,34 @@ const mongoose = require('mongoose');
 const { assertFinance } = require('../../auth/requireFinance');
 const SetMonthlyAllowanceInput = require('./schemas/setAllowanceInput');
 const SetAccountHolderInput = require('./schemas/setAccountHolderInput');
-const { monthLabel, buildRows, annotateDrift } = require('../../payments/monthGeneration');
+const { monthLabel, buildRows, annotateDrift, blockedReason } = require('../../payments/monthGeneration');
 
 const GeneratePeriodInput = new GraphQLInputObjectType({
     name: 'GeneratePaymentPeriodInput',
     fields: { month: { type: GraphQLString } },
+});
+
+// Only the fields being changed need to be sent. An absent amount means "leave
+// the amount alone", which is why the resolver checks for presence rather than
+// reading a value that may be legitimately null.
+const BankChoiceInput = new GraphQLInputObjectType({
+    name: 'PaymentBankChoiceInput',
+    fields: {
+        bankName: { type: GraphQLString },
+        accountNumber: { type: GraphQLString },
+    },
+});
+
+const SetPayoutRowInput = new GraphQLInputObjectType({
+    name: 'SetPayoutRowInput',
+    fields: {
+        month: { type: new GraphQLNonNull(GraphQLString) },
+        record: { type: 'MongoID!' },
+        included: { type: GraphQLBoolean },
+        amount: { type: GraphQLInt },
+        note: { type: GraphQLString },
+        bankAccount: { type: BankChoiceInput },
+    },
 });
 
 // Payments data lives on the beneficiary, but is deliberately unreachable through
@@ -85,6 +108,14 @@ const AccountHolderResultType = new GraphQLObjectType({
     fields: () => ({
         id: { type: GraphQLString },
         accountHolderId: { type: GraphQLString },
+    }),
+});
+
+const SetPayoutRowPayload = new GraphQLObjectType({
+    name: 'SetPayoutRowPayload',
+    fields: () => ({
+        month: { type: GraphQLString },
+        updated: { type: GraphQLBoolean },
     }),
 });
 
@@ -239,6 +270,87 @@ module.exports = function registerPaymentFields(schemaComposer) {
     });
 
     schemaComposer.Mutation.addFields({
+        // The whole tick list runs through here: ticking, un-ticking, a per-month
+        // amount, a note, and choosing which of a holder's accounts pays.
+        setPayoutRow: {
+            type: SetPayoutRowPayload,
+            args: { record: { type: new GraphQLNonNull(SetPayoutRowInput) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const input = args.record;
+                const period = await PaymentPeriod.findOne({ month: input.month });
+                if (!period) {
+                    throw new Error('That month has not been generated.');
+                }
+
+                // Everything about a month freezes at approval. Refusing here is
+                // what makes an approved month genuinely unchangeable rather
+                // than merely discouraged.
+                if (period.status !== 'Draft') {
+                    throw new Error(
+                        `This month is ${period.status.toLowerCase()} and can no longer be changed. Reopen it first.`
+                    );
+                }
+
+                const row = period.rows.find(r => String(r.record) === String(input.record));
+                if (!row) {
+                    throw new Error('That beneficiary is not in this month.');
+                }
+
+                const holder = row.accountHolder
+                    ? await AccountHolder.findById(row.accountHolder).lean()
+                    : null;
+
+                if (input.bankAccount) {
+                    const banks = holder && Array.isArray(holder.banks) ? holder.banks : [];
+                    const chosen = banks.find(
+                        b => b.bankName === input.bankAccount.bankName
+                            && b.accountNumber === input.bankAccount.accountNumber
+                    );
+                    if (!chosen) {
+                        throw new Error('That account is not one of this account holder\'s accounts.');
+                    }
+                    row.bankAccount = {
+                        bankName: chosen.bankName,
+                        accountNumber: chosen.accountNumber,
+                    };
+                }
+
+                // Recomputed from the holder rather than trusted from generation:
+                // choosing a bank account is what clears the last obstacle on a
+                // row that was waiting for one.
+                row.blocked = blockedReason(row, holder);
+
+                if ('amount' in input && input.amount !== undefined) {
+                    if (!Number.isInteger(input.amount) || input.amount < 0) {
+                        throw new Error('A monthly amount must be a whole number of birr, zero or more.');
+                    }
+                    // This month's amount only. The standing allowance is a
+                    // separate thing and is deliberately left alone.
+                    row.amount = input.amount;
+                }
+
+                if ('note' in input && input.note !== undefined) {
+                    row.note = input.note;
+                }
+
+                if (input.included === true && row.blocked) {
+                    throw new Error(
+                        `This row cannot be ticked until it is resolved (${row.blocked.replace(/-/g, ' ')}).`
+                    );
+                }
+                if (input.included !== undefined) {
+                    row.included = input.included;
+                }
+
+                period.modifiedBy = context.ctx.state.user._id;
+                await period.save();
+
+                return { month: period.month, updated: true };
+            },
+        },
+
         generatePaymentPeriod: {
             type: PeriodResultType,
             args: { record: { type: new GraphQLNonNull(GeneratePeriodInput) } },

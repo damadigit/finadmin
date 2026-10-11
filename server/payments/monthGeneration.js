@@ -136,4 +136,19 @@ function aggregateRows(rows) {
     }));
 }
 
-module.exports = { MONTH_NAMES, BLOCKED, monthLabel, isEligible, buildRows, annotateDrift, aggregateRows };
+// Whether a row can be ticked, given the account holder behind it.
+//
+// A row is blocked by the holder's state, not by anything finance did wrong, so
+// this is recomputed whenever the holder changes rather than being trusted from
+// generation time - picking a bank account can clear the last of it.
+function blockedReason(row, holder) {
+    if (!row || !row.accountHolder || !holder) return BLOCKED.UNLINKED;
+    const banks = Array.isArray(holder.banks) ? holder.banks : [];
+    if (banks.length === 0) return BLOCKED.NO_BANK_ACCOUNT;
+    return null;
+}
+
+module.exports = {
+    MONTH_NAMES, BLOCKED, monthLabel, isEligible, buildRows, annotateDrift,
+    aggregateRows, blockedReason,
+};
