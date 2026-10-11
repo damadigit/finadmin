@@ -7,6 +7,7 @@ const { assertFinance, assertFinanceAdmin } = require('../../auth/requireFinance
 const SetMonthlyAllowanceInput = require('./schemas/setAllowanceInput');
 const SetAccountHolderInput = require('./schemas/setAccountHolderInput');
 const { monthLabel, buildRows, annotateDrift, blockedReason } = require('../../payments/monthGeneration');
+const { buildBankFile, bankLines, bankNames } = require('../../payments/bankFile');
 const {
     STATUS, canTransition, assertApprovable, assertHasPayees,
 } = require('../../payments/monthLifecycle');
@@ -19,6 +20,14 @@ const GeneratePeriodInput = new GraphQLInputObjectType({
 // Only the fields being changed need to be sent. An absent amount means "leave
 // the amount alone", which is why the resolver checks for presence rather than
 // reading a value that may be legitimately null.
+const ExportInput = new GraphQLInputObjectType({
+    name: 'ExportBankFileInput',
+    fields: {
+        month: { type: new GraphQLNonNull(GraphQLString) },
+        bankName: { type: new GraphQLNonNull(GraphQLString) },
+    },
+});
+
 const ReopenInput = new GraphQLInputObjectType({
     name: 'ReopenPaymentPeriodInput',
     fields: {
@@ -127,6 +136,17 @@ const SetPayoutRowPayload = new GraphQLObjectType({
     fields: () => ({
         month: { type: GraphQLString },
         updated: { type: GraphQLBoolean },
+    }),
+});
+
+const BankFileType = new GraphQLObjectType({
+    name: 'PaymentBankFile',
+    fields: () => ({
+        month: { type: GraphQLString },
+        bankName: { type: GraphQLString },
+        filename: { type: GraphQLString },
+        contents: { type: GraphQLString },
+        lineCount: { type: GraphQLInt },
     }),
 });
 
@@ -374,6 +394,54 @@ module.exports = function registerPaymentFields(schemaComposer) {
         // ---- lifecycle -------------------------------------------------------
         // Approve is the point money becomes committed. It is deliberately the
         // one transition a plain finance officer cannot perform.
+
+        // ---- the bank file ---------------------------------------------------
+
+        // Reads the rows exactly as approved. Bank details that have drifted
+        // since generation are surfaced on screen, but what was approved is what
+        // pays - quietly substituting a corrected account number here would pay
+        // something nobody approved.
+        exportBankFile: {
+            type: BankFileType,
+            args: { record: { type: new GraphQLNonNull(ExportInput) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.record.month });
+                if (!period) throw new Error('That month has not been generated.');
+
+                if (period.status === STATUS.DRAFT) {
+                    throw new Error('A month must be approved before a bank file can be taken from it.');
+                }
+
+                const rows = (period.rows || []).map(r => (r.toObject ? r.toObject() : r));
+                const lines = bankLines(rows, args.record.bankName);
+                const available = bankNames(rows);
+
+                if (available.length && !available.includes(args.record.bankName)) {
+                    throw new Error(`This month has nothing to pay at ${args.record.bankName}.`);
+                }
+
+                const contents = buildBankFile(lines);
+                const user = context.ctx.state.user;
+
+                period.exports.push({
+                    bankName: args.record.bankName,
+                    exportedBy: user._id,
+                    exportedAt: new Date(),
+                    superseded: false,
+                });
+                await period.save();
+
+                return {
+                    month: period.month,
+                    bankName: args.record.bankName,
+                    filename: `${period.month}-${args.record.bankName.replace(/[^A-Za-z0-9]+/g, '-')}.csv`,
+                    contents,
+                    lineCount: lines.length,
+                };
+            },
+        },
 
         approvePaymentPeriod: {
             type: TransitionPayload,
