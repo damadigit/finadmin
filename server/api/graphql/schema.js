@@ -18,7 +18,74 @@ const {ModelTC:PostModelTC}  = buildSchema('Post',schemaComposer);
 // Both are guarded in the resolver, not just hidden in the interface: these are
 // the first models in the application that a role can be refused access to.
 const requireFinance = require('../../auth/requireFinance');
-const requireAdmin = require('../../auth/requireAdmin');
+const requireUserManagement = require('../../auth/requireUserManagement');
+const { isSuperAdmin, assertNotLastSuperAdmin, SUPER_ADMIN } = require('../../users/roleLifecycle');
+
+// The last super-admin cannot be deleted.
+//
+// Granting super-admin is itself a user-management action, so stripping it from
+// every account disables user management permanently: there is nobody left who
+// can put it back. This counts super-admins OTHER THAN the ones being removed,
+// so deleting one of two is allowed and deleting the last is not.
+//
+// It is the model's deleteGuard rather than a check inside a purpose-built
+// resolver because that covers the bulk paths as well as the single-document
+// one. A guard placed only on a hand-written deleteUser would leave
+// deleteOneUser and deleteManyUser open as a way round it.
+//
+// A guard that cannot see its targets must not wave them through. The remove
+// filters carry `_operators`, `OR` and `AND`, none of which mean anything to a
+// plain find() - passing one straight through matches nothing, finds no
+// targets, returns early, and deletes the last super-admin anyway. That was not
+// hypothetical: `deleteOneUser(filter: { _operators: { email: { in: [...] } } })`
+// removed the only super-admin in the installation before this was fixed.
+//
+// So the failure mode is deliberately inverted. Rather than reason about filters
+// it cannot evaluate, the guard refuses them and asks for a deletion it can
+// check. Refusing a delete that would have been fine is an inconvenience;
+// allowing one that should never have happened is a permanent lockout.
+
+// `_ids` is a graphql-compose-mongoose convention rather than a Mongo field, so
+// it is translated to $in for the same reason.
+const UNEVALUABLE_FILTER_KEYS = ['_operators', 'OR', 'AND'];
+
+function deleteTargetsFrom(args) {
+    if (args._id) return { _id: args._id };
+
+    const filter = args.filter;
+    if (!filter) return null;
+
+    const unevaluable = UNEVALUABLE_FILTER_KEYS.filter(key => filter[key] !== undefined);
+    if (unevaluable.length > 0) {
+        throw new Error(
+            `Cannot delete with a filter using ${unevaluable.join(', ')}: the check for the last `
+            + 'super-admin cannot see through it. Delete accounts one at a time by id.'
+        );
+    }
+
+    if (Array.isArray(filter._ids)) return { _id: { $in: filter._ids } };
+
+    return filter;
+}
+
+const refuseDeletingLastSuperAdmin = async (args) => {
+    const query = deleteTargetsFrom(args);
+    if (!query) return;
+
+    const User = mongoose.model('User');
+    const targets = await User.find(query).select('roles');
+    if (targets.length === 0) return;
+
+    const removing = targets.filter(doc => isSuperAdmin(doc.roles)).length;
+    if (removing === 0) return;
+
+    const total = await User.countDocuments({ roles: SUPER_ADMIN });
+
+    assertNotLastSuperAdmin({
+        targetRoles: [SUPER_ADMIN],
+        otherSuperAdminCount: total - removing,
+    });
+};
 
 // Accounts are the root of the permission model, so they are guarded rather than
 // composed open. Composed without a guard, this single line let any signed-in
@@ -27,7 +94,16 @@ const requireAdmin = require('../../auth/requireAdmin');
 // applied here rather than on the payments models because escalation defeats
 // those guards: a user who can edit a user can grant themselves a role that gets
 // past every one of them.
-const {ModelTC:UserModelTC} = buildSchema('User',schemaComposer, { guards: [requireAdmin] });
+//
+// The guard is now requireUserManagement rather than requireAdmin, because user
+// management became its own boundary when super-admin was introduced. An
+// administrator deciding who is trusted is a different power from an
+// administrator editing beneficiary records, and merging them again would undo
+// the split.
+const {ModelTC:UserModelTC} = buildSchema('User',schemaComposer, {
+    guards: [requireUserManagement],
+    deleteGuard: refuseDeletingLastSuperAdmin,
+});
 
 // The password hash is removed from the User type and from every input that
 // carries it.
@@ -38,6 +114,7 @@ const {ModelTC:UserModelTC} = buildSchema('User',schemaComposer, { guards: [requ
 // anything. Neither is reachable through the interface once the field is absent,
 // so this is not a hiding of the UI but the removal of the capability itself.
 const PASSWORD = 'password';
+const ROLES = 'roles';
 
 const userInputTypes = [
     'CreateOneUserInput', 'CreateManyUserInput',
@@ -66,6 +143,45 @@ const userInputTypes = [
 // account with a password of their choosing in one request.
 schemaComposer.Mutation.removeField('createUser');
 schemaComposer.Mutation.removeField('createManyUser');
+
+// `roles` is removed from the composed update inputs for the same reason the
+// allowance is removed from Record: a field that can bypass a hand-written
+// mutation's invariant is an invariant that is not enforced.
+//
+// setUserRoles is where roles are changed, and it refuses to remove the last
+// super-admin and refuses to let a caller demote themselves. Left on
+// updateUser, either check could be stepped around by calling updateUser with a
+// roles field instead - which is precisely the call the escalation tests already
+// make. Email stays, so changing an address still goes through the ordinary
+// composed path.
+//
+// createdBy and modifiedBy are struck from the inputs for a different reason: an
+// audit trail a caller can write is not an audit trail. mongooseQL's
+// authMiddleware overwrites both on the way through, so a forged value would be
+// discarded anyway, but relying on that is relying on the middleware running -
+// and it does not run for the hand-written resolvers. Removing the fields makes
+// the trail unwriteable from outside rather than merely overwritten.
+//
+// The create inputs are stripped too, even though createUser is gone: they are
+// the inputs createUserAccount's counterpart would be built from, and leaving a
+// writable role list on a type nothing uses is how it gets used later.
+//
+// Deduplicated because the create types appear in userInputTypes already, and
+// removing a field twice is an error on an input type. hasField rather than
+// getField because getField throws on an input type rather than returning
+// undefined, which would make the removal order matter.
+const STRIPPED_FROM_USER_INPUTS = [ROLES, 'createdBy', 'modifiedBy'];
+
+[...new Set([...userInputTypes, 'CreateOneUserInput', 'CreateManyUserInput'])]
+    .map(name => schemaComposer.getAnyTC(name))
+    .filter(Boolean)
+    .forEach(type => {
+        STRIPPED_FROM_USER_INPUTS.forEach(field => {
+            if (type.hasField(field)) {
+                type.removeField(field);
+            }
+        });
+    });
 
 // An account holder that is still linked to a beneficiary cannot be deleted:
 // the link is what a payment is made against, and silently dropping it would
@@ -121,6 +237,7 @@ RECORD_INPUTS_ONLY.forEach(field => {
 });
 
 require('./payments')(schemaComposer);
+require('./users')(schemaComposer);
 RecordModelTC.addFields({
  fullName: 'String',
  // Deliberately pinned to an id rather than the composed AccountHolder type.

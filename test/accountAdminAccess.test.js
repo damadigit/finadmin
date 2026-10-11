@@ -32,14 +32,20 @@ describe('account administration', () => {
         '{ oneUser(filter: { email: "anyone@example.com" }) { id } }',
     ];
 
+    // `roles` is no longer writable through any composed user input - role
+    // assignment moved to the guarded setUserRoles mutation so that it can
+    // enforce the rules about the last super-admin. These writes therefore use
+    // `email`, which is still composed, so what is under test is the GUARD and
+    // not the absence of a field. test/userManagementAccess.test.js covers the
+    // role path itself.
     const writes = [
         {
             mutation: `
                 mutation updateUser($record: UpdateByIdUserInput!) {
-                    updateUser(record: $record) { record { id roles } }
+                    updateUser(record: $record) { record { id email } }
                 }
             `,
-            variables: { record: { _id: '507f1f77bcf86cd799439011', roles: ['admin'] } },
+            variables: { record: { _id: '507f1f77bcf86cd799439011', email: 'taken@example.com' } },
         },
         {
             mutation: `
@@ -55,7 +61,7 @@ describe('account administration', () => {
                     updateOneUser(filter: $filter, record: $record) { record { id } }
                 }
             `,
-            variables: { filter: { email: 'someone@example.com' }, record: { roles: ['admin'] } },
+            variables: { filter: { email: 'someone@example.com' }, record: { email: 'taken@example.com' } },
         },
     ];
 
@@ -93,16 +99,16 @@ describe('account administration', () => {
             }
         });
 
-        it('allows an administrator to grant and change roles', async () => {
+        it('allows an administrator to change an email', async () => {
             const admin = await createUser({ roles: ['admin'] });
             const applicant = await createUser({ roles: ['handler'], email: 'applicant@example.com' });
 
             const data = await gql.run(schema, writes[0].mutation, {
                 user: admin,
-                variables: { record: { _id: String(applicant._id), roles: ['finance'] } },
+                variables: { record: { _id: String(applicant._id), email: 'renamed@example.com' } },
             });
 
-            expect(data.updateUser.record.roles).toEqual(['finance']);
+            expect(data.updateUser.record.email).toBe('renamed@example.com');
         });
     });
 
@@ -123,19 +129,38 @@ describe('account administration', () => {
     // three calls were enough to take over the installation from a low-privilege
     // account, and a role change made that way is invisible to every other guard
     // in the system because the attacker is now legitimately a financeAdmin.
+    //
+    // Two independent defences now stand in the way. `roles` is not a field on
+    // any composed user input, so the promotion simply cannot be expressed; and
+    // for any write that does exist, the guard refuses a caller outside the
+    // boundary. Both are asserted, because either alone would be a thinner
+    // guarantee than the one being replaced.
     describe('escalation', () => {
-        it('stops a user promoting their own roles', async () => {
+        it('cannot express a role promotion through the composed path at all', async () => {
             const attacker = await createUser({ roles: ['handler'], email: 'attacker@example.com' });
+
+            await expect(
+                gql.run(schema,
+                    'mutation($r: UpdateByIdUserInput!) { updateUser(record: $r) { record { id } } }',
+                    { user: attacker, variables: { r: { _id: String(attacker._id), roles: ['financeAdmin'] } } }
+                )
+            ).rejects.toThrow(/roles/);
+        });
+
+        it('stops a user changing their own account', async () => {
+            const attacker = await createUser({ roles: ['handler'], email: 'attacker@example.com' });
+            const emailBefore = attacker.email;
 
             await expect(
                 gql.run(schema, writes[0].mutation, {
                     user: attacker,
-                    variables: { record: { _id: String(attacker._id), roles: ['financeAdmin'] } },
+                    variables: { record: { _id: String(attacker._id), email: 'attacker2@example.com' } },
                 })
             ).rejects.toThrow(/Forbidden/);
 
             const unchanged = await db.mongoose.model('User').findById(attacker._id);
             expect(Array.from(unchanged.roles)).toEqual(['handler']);
+            expect(unchanged.email).toBe(emailBefore);
         });
 
         it('stops a user rewriting another account', async () => {
@@ -146,12 +171,13 @@ describe('account administration', () => {
             await expect(
                 gql.run(schema, writes[2].mutation, {
                     user: attacker,
-                    variables: { filter: { email: 'boss@example.com' }, record: { roles: ['handler'] } },
+                    variables: { filter: { email: 'boss@example.com' }, record: { email: 'stolen@example.com' } },
                 })
             ).rejects.toThrow(/Forbidden/);
 
             const victimAfter = await db.mongoose.model('User').findById(victim._id).select('+password');
             expect(Array.from(victimAfter.roles)).toEqual(['financeAdmin']);
+            expect(victimAfter.email).toBe('boss@example.com');
             expect(victimAfter.password).toBe(victimBefore.password);
         });
 
