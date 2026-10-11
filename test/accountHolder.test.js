@@ -142,4 +142,48 @@ describe('account holders', () => {
             })
         ).rejects.toThrow();
     });
+
+    // The exact query the Account Holders page opens with, written out as
+    // graphDataProvider builds it.
+    //
+    // It sorts by name, and graphql-compose-mongoose only offers a sort order
+    // for fields that carry an index - it reads the schema's `_index` flags, not
+    // the collection's real indexes. `name` had no index, so the enum held only
+    // _ID_ASC and the page failed to load with "Value NAME_ASC does not exist in
+    // SortFindManyAccountHolderInput". Nothing on the server was broken by that;
+    // the page simply could not ask for the order it wanted.
+    //
+    // Asserted two ways on purpose. The enum check says the field is offered for
+    // sorting; the query check says the resolver honours it. A schema change
+    // that drops the index again fails here rather than in the browser.
+    it('offers and serves a sort by name, which is what the list page asks for', async () => {
+        const sortValues = schema.getType('SortFindManyAccountHolderInput')
+            .getValues().map(v => v.name);
+        expect(sortValues).toContain('NAME_ASC');
+
+        await gql.run(schema, createAccountHolder, {
+            user,
+            variables: { record: { name: 'Zewditu', banks: [{ bankName: 'Dashen', accountNumber: '1' }] } },
+        });
+        await gql.run(schema, createAccountHolder, {
+            user,
+            variables: { record: { name: 'Almaz', banks: [{ bankName: 'Nib', accountNumber: '2' }] } },
+        });
+
+        const data = await gql.run(schema, `
+            query allAccountHolders($filter: FilterFindManyAccountHolderInput, $sort: SortFindManyAccountHolderInput, $skip: Int, $limit: Int) {
+                items: allAccountHolders(filter: $filter, sort: $sort, skip: $skip, limit: $limit) {
+                    id
+                    name
+                    banks { _id bankName accountNumber }
+                    createdBy
+                    modifiedBy
+                }
+                total: _allAccountHoldersMeta(filter: $filter) { count }
+            }
+        `, { user, variables: { sort: 'NAME_ASC', skip: 0, limit: 50 } });
+
+        expect(data.total.count).toBe(2);
+        expect(data.items.map(h => h.name)).toEqual(['Almaz', 'Zewditu']);
+    });
 });
