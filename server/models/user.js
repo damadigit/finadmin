@@ -16,7 +16,10 @@ const UserSchema = new mongoose.Schema({
     },
     roles: [{
         type: String,
-        enum: ['admin', 'handler', 'sponsor', 'etAdmin', 'beAdmin'],
+        // finance prepares a payment month; financeAdmin additionally approves,
+        // reopens and marks one paid. Neither role grants access to anything
+        // else in the application.
+        enum: ['admin', 'handler', 'sponsor', 'etAdmin', 'beAdmin', 'finance', 'financeAdmin'],
         default: 'handler'
     }]
 

@@ -5,7 +5,25 @@ const _ = require("lodash")
 const pluralize = require('pluralize')
 const ListMetadataTC = require('./schemas/listMetaData')
 // const {isAuthenticated} = require("../../auth");
-module.exports = function(name,schemaComposer ) {
+module.exports = function(name,schemaComposer, options = {}) {
+
+    // Resolver middleware applied to every operation this model exposes, reads
+    // as well as writes. Payment models pass the finance guard here so that the
+    // restriction holds in the API rather than only in the interface.
+    const guards = options.guards || [];
+
+    // Optional check run before any delete on this model. It receives the
+    // resolver's arguments and may throw to block the delete. Models use it to
+    // refuse removals that would orphan something else - a holder that is still
+    // linked to a beneficiary, for instance. Covers the bulk path as well as
+    // the single-document one.
+    const deleteGuard = options.deleteGuard;
+    const guardDelete = deleteGuard
+        ? [async (resolve, root, args, context, info) => {
+            await deleteGuard(args, context);
+            return resolve(root, args, context, info);
+        }]
+        : [];
 
     const flattenKeys = (obj, path = []) =>
         !_.isObject(obj)
@@ -70,14 +88,14 @@ const authMiddleware = async (resolve, root, args, context, info) => {
     );
 
     schemaComposer.Query.addFields({
-        [name]: ModelTC.getResolver('findById'),
-        [`byIds${name}`]: ModelTC.getResolver('findByIds'),
-        [`one${name}`]: ModelTC.getResolver('findOne'),
-        [`all${pluralize(name)}`]: ModelTC.getResolver('findMany'),
-        [`_all${pluralize(name)}Meta`]: ModelTC.getResolver('allMeta'),
-        [`count${name}`]: ModelTC.getResolver('count'),
-        [`connection${name}`]: ModelTC.getResolver('connection'),
-        [`pagination${name}`]: ModelTC.getResolver('pagination'),
+        [name]: ModelTC.getResolver('findById', guards),
+        [`byIds${name}`]: ModelTC.getResolver('findByIds', guards),
+        [`one${name}`]: ModelTC.getResolver('findOne', guards),
+        [`all${pluralize(name)}`]: ModelTC.getResolver('findMany', guards),
+        [`_all${pluralize(name)}Meta`]: ModelTC.getResolver('allMeta', guards),
+        [`count${name}`]: ModelTC.getResolver('count', guards),
+        [`connection${name}`]: ModelTC.getResolver('connection', guards),
+        [`pagination${name}`]: ModelTC.getResolver('pagination', guards),
     });
 
 
@@ -85,14 +103,14 @@ const authMiddleware = async (resolve, root, args, context, info) => {
 
 
     schemaComposer.Mutation.addFields({
-        [`create${name}`]: ModelTC.getResolver('createOne',[authMiddleware]),
-        [`createMany${name}`]: ModelTC.getResolver('createMany',[authMiddleware]),
-        [`update${name}`]: ModelTC.getResolver('updateById',[authMiddleware]),
-        [`updateOne${name}`]: ModelTC.getResolver('updateOne',[authMiddleware]),
-        [`updateMany${name}`]: ModelTC.getResolver('updateMany',[authMiddleware]),
-        [`delete${name}`]: ModelTC.getResolver('removeById',[authMiddleware]),
-        [`deleteOne${name}`]: ModelTC.getResolver('removeOne',[authMiddleware]),
-        [`deleteMany${name}`]: ModelTC.getResolver('removeMany',[authMiddleware]),
+        [`create${name}`]: ModelTC.getResolver('createOne',[...guards, authMiddleware]),
+        [`createMany${name}`]: ModelTC.getResolver('createMany',[...guards, authMiddleware]),
+        [`update${name}`]: ModelTC.getResolver('updateById',[...guards, authMiddleware]),
+        [`updateOne${name}`]: ModelTC.getResolver('updateOne',[...guards, authMiddleware]),
+        [`updateMany${name}`]: ModelTC.getResolver('updateMany',[...guards, authMiddleware]),
+        [`delete${name}`]: ModelTC.getResolver('removeById',[...guards, ...guardDelete, authMiddleware]),
+        [`deleteOne${name}`]: ModelTC.getResolver('removeOne',[...guards, ...guardDelete, authMiddleware]),
+        [`deleteMany${name}`]: ModelTC.getResolver('removeMany',[...guards, ...guardDelete, authMiddleware]),
     });
 
 
