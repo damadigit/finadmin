@@ -13,9 +13,38 @@ env:
   TAG_COMMIT: ${{ secrets.REGISTRY_IMAGE }}:${{ github.sha }}
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # The integration tests boot a real mongod; caching it saves a ~100MB
+      # download on every run.
+      - name: Cache MongoDB binary
+        uses: actions/cache@v3
+        with:
+          path: node_modules/.cache/mongodb-memory-server
+          key: mongod-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+
+      - name: Run tests
+        run: yarn test
+
   publish:
     name: Build and Publish Docker Image
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Checkout code
