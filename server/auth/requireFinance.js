@@ -1,4 +1,4 @@
-const { hasPaymentRole } = require('./roles');
+const { hasPaymentRole, hasFinanceAdminRole } = require('./roles');
 
 // Resolver middleware guarding the payments feature.
 //
@@ -21,5 +21,16 @@ function assertFinance(context) {
     }
 }
 
+function assertFinanceAdmin(context) {
+    assertFinance(context);
+    const ctx = context && context.ctx;
+    const user = ctx && ctx.state && ctx.state.user;
+
+    if (!hasFinanceAdminRole(user)) {
+        throw new Error('Forbidden: approving, reopening and closing a month are reserved to finance administrators.');
+    }
+}
+
 module.exports = requireFinance;
 module.exports.assertFinance = assertFinance;
+module.exports.assertFinanceAdmin = assertFinanceAdmin;

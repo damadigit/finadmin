@@ -3,10 +3,13 @@ const {
     GraphQLInputObjectType,
 } = require('graphql');
 const mongoose = require('mongoose');
-const { assertFinance } = require('../../auth/requireFinance');
+const { assertFinance, assertFinanceAdmin } = require('../../auth/requireFinance');
 const SetMonthlyAllowanceInput = require('./schemas/setAllowanceInput');
 const SetAccountHolderInput = require('./schemas/setAccountHolderInput');
 const { monthLabel, buildRows, annotateDrift, blockedReason } = require('../../payments/monthGeneration');
+const {
+    STATUS, canTransition, assertApprovable, assertHasPayees,
+} = require('../../payments/monthLifecycle');
 
 const GeneratePeriodInput = new GraphQLInputObjectType({
     name: 'GeneratePaymentPeriodInput',
@@ -16,6 +19,14 @@ const GeneratePeriodInput = new GraphQLInputObjectType({
 // Only the fields being changed need to be sent. An absent amount means "leave
 // the amount alone", which is why the resolver checks for presence rather than
 // reading a value that may be legitimately null.
+const ReopenInput = new GraphQLInputObjectType({
+    name: 'ReopenPaymentPeriodInput',
+    fields: {
+        month: { type: new GraphQLNonNull(GraphQLString) },
+        reason: { type: new GraphQLNonNull(GraphQLString) },
+    },
+});
+
 const BankChoiceInput = new GraphQLInputObjectType({
     name: 'PaymentBankChoiceInput',
     fields: {
@@ -116,6 +127,15 @@ const SetPayoutRowPayload = new GraphQLObjectType({
     fields: () => ({
         month: { type: GraphQLString },
         updated: { type: GraphQLBoolean },
+    }),
+});
+
+const TransitionPayload = new GraphQLObjectType({
+    name: 'PaymentPeriodTransitionPayload',
+    fields: () => ({
+        month: { type: GraphQLString },
+        status: { type: GraphQLString },
+        supersededExports: { type: GraphQLInt },
     }),
 });
 
@@ -348,6 +368,95 @@ module.exports = function registerPaymentFields(schemaComposer) {
                 await period.save();
 
                 return { month: period.month, updated: true };
+            },
+        },
+
+        // ---- lifecycle -------------------------------------------------------
+        // Approve is the point money becomes committed. It is deliberately the
+        // one transition a plain finance officer cannot perform.
+
+        approvePaymentPeriod: {
+            type: TransitionPayload,
+            args: { month: { type: new GraphQLNonNull(GraphQLString) } },
+            resolve: async (source, args, context) => {
+                assertFinanceAdmin(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.month });
+                if (!period) throw new Error('That month has not been generated.');
+
+                if (!canTransition(period.status, STATUS.APPROVED)) {
+                    throw new Error(`This month is already ${period.status.toLowerCase()}.`);
+                }
+
+                assertApprovable(period.rows);
+                assertHasPayees(period.rows);
+
+                period.status = STATUS.APPROVED;
+                period.approvedBy = context.ctx.state.user._id;
+                period.approvedAt = new Date();
+                period.modifiedBy = period.approvedBy;
+                await period.save();
+
+                return { month: period.month, status: period.status, supersededExports: 0 };
+            },
+        },
+
+        markPaymentPeriodPaid: {
+            type: TransitionPayload,
+            args: { month: { type: new GraphQLNonNull(GraphQLString) } },
+            resolve: async (source, args, context) => {
+                assertFinanceAdmin(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.month });
+                if (!period) throw new Error('That month has not been generated.');
+
+                if (!canTransition(period.status, STATUS.PAID)) {
+                    throw new Error('A month can only be marked paid once it has been approved.');
+                }
+
+                period.status = STATUS.PAID;
+                period.paidBy = context.ctx.state.user._id;
+                period.paidAt = new Date();
+                period.modifiedBy = period.paidBy;
+                await period.save();
+
+                return { month: period.month, status: period.status, supersededExports: 0 };
+            },
+        },
+
+        reopenPaymentPeriod: {
+            type: TransitionPayload,
+            args: { record: { type: new GraphQLNonNull(ReopenInput) } },
+            resolve: async (source, args, context) => {
+                assertFinanceAdmin(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.record.month });
+                if (!period) throw new Error('That month has not been generated.');
+
+                if (!canTransition(period.status, STATUS.DRAFT)) {
+                    throw new Error('A month that is still a draft does not need reopening.');
+                }
+
+                const reason = (args.record.reason || '').trim();
+                if (!reason) {
+                    throw new Error('Reopening a month requires a reason.');
+                }
+
+                // A file already taken from this month is now stale, and reusing
+                // it would pay the wrong amounts. Kept, but marked superseded.
+                const superseded = (period.exports || []).filter(e => !e.superseded).length;
+                (period.exports || []).forEach(e => { e.superseded = true; });
+
+                period.status = STATUS.DRAFT;
+                period.reopenedBy = context.ctx.state.user._id;
+                period.reopenedAt = new Date();
+                period.reopenReason = reason;
+                period.approvedBy = undefined;
+                period.approvedAt = undefined;
+                period.modifiedBy = period.reopenedBy;
+                await period.save();
+
+                return { month: period.month, status: period.status, supersededExports: superseded };
             },
         },
 

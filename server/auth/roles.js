@@ -11,4 +11,16 @@ function hasPaymentRole(user) {
     return PAYMENT_ROLES.some(role => roles.includes(role));
 }
 
-module.exports = { PAYMENT_ROLES, hasPaymentRole };
+// Approving, reopening and marking a month paid are reserved to the second
+// role. Preparing a month and committing to it are deliberately different
+// powers: the people who assemble a payout should not be the people who sign it
+// off, because approving your own work is the weakness a finance feature is most
+// exposed to.
+const PAYMENT_ADMIN_ROLES = ['financeAdmin'];
+
+function hasFinanceAdminRole(user) {
+    const roles = (user && user.roles) || [];
+    return PAYMENT_ADMIN_ROLES.some(role => roles.includes(role));
+}
+
+module.exports = { PAYMENT_ROLES, PAYMENT_ADMIN_ROLES, hasPaymentRole, hasFinanceAdminRole };
