@@ -7,7 +7,6 @@ const fs = require('fs').promises;
 const multer = require('@koa/multer');
 const sharp = require('sharp');
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const {getVisitWord} = require("../../reports/visitWordReport");
 const User = mongoose.model('User')
 const { auth: authConfig } = require('../../auth/config');
@@ -24,7 +23,8 @@ const exists = async filePath => {
 const {
     authEmail,
     generateToken,
-    isAuthenticated
+    isAuthenticated,
+    tryAuthenticated,
 } = require('../../auth');
 
 // Configure multer for file uploads
@@ -317,51 +317,10 @@ async function sendStoredFile(ctx) {
     }
 }
 
-// Identifies the caller when a token is present, without insisting on one.
-//
-// A signed URL carries its own credential in the query string, so requiring the
-// header here would reject exactly the requests it exists to serve. Passport's
-// own middleware answers 401 itself when it cannot authenticate, which would
-// overwrite a perfectly good file response.
-//
-// It also halts the middleware chain when the strategy fails, which stops the
-// request before the handler can decide that a signature was good enough. The
-// token is therefore verified here directly, and sendStoredFile decides what is
-// acceptable: a valid signature is, and no credential at all is not.
-//
-// A token that does not verify is treated as no token rather than as an error.
-// Both lead to the same refusal, and the file route reports that refusal itself.
-const tryAuthenticated = async (ctx, next) => {
-    ctx.state.user = null;
-
-    const header = ctx.get('authorization') || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
-
-    if (token) {
-        try {
-            // Verified against the same secrets the strategy accepts, so a token
-            // issued before the signing secret rotated still works here.
-            for (const secret of authConfig.verificationSecrets) {
-                try {
-                    const payload = jwt.verify(token, secret);
-                    const user = await mongoose.model('User').findById(payload.id);
-                    if (user) {
-                        ctx.state.user = user;
-                    }
-                    break;
-                } catch (e) {
-                    // Not signed with this one; try the next.
-                }
-            }
-        } catch (e) {
-            // Malformed token: treated as absent.
-        }
-    }
-
-    return next();
-};
-
-router.get('/files/(.*)', tryAuthenticated, sendStoredFile);
+// The caller may arrive two ways: an Authorization header, or a signature in the
+// query string. tryAuthenticated identifies the former without refusing the
+// latter, and sendStoredFile decides whether what it has is enough.
+router.get('/files/(.*)', tryAuthenticated(), sendStoredFile);
 
 // Signs a stored path for a short time. The caller must be signed in; the
 // signature is what makes the resulting URL usable by a tag that cannot send a

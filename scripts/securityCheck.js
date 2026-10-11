@@ -98,14 +98,26 @@ async function main() {
     };
 
     // --- the escalation that was possible before ----------------------------
+    // setUserRoles is the only way to reach a role now; `roles` is deliberately
+    // absent from the composed User inputs. A handler calling it must still be
+    // refused.
     const escalate = await gql(
-        'mutation($r: UpdateByIdUserInput!){ updateUser(record: $r){ record{ id roles } } }',
-        { r: { _id: regBody.user.id || regBody.user._id, roles: ['financeAdmin'] } },
+        'mutation($userId: MongoID!, $roles: [String!]!){ setUserRoles(userId: $userId, roles: $roles){ id email roles } }',
+        { userId: regBody.user.id || regBody.user._id, roles: ['financeAdmin'] },
         handlerToken
     );
     check('a handler cannot promote their own role',
         Boolean(escalate.errors && escalate.errors[0].message.includes('Forbidden')),
         escalate.errors ? escalate.errors[0].message : 'mutation succeeded');
+
+    const createAccount = await gql(
+        'mutation { createUserAccount(email: "sneaky@example.com", password: "longenough", roles: ["admin"]) { id email } }',
+        {},
+        handlerToken
+    );
+    check('a handler cannot create an account',
+        Boolean(createAccount.errors && createAccount.errors[0].message.includes('Forbidden')),
+        createAccount.errors ? createAccount.errors[0].message : 'mutation succeeded');
 
     const readUsers = await gql('{ allUsers { email } }', {}, handlerToken);
     check('a handler cannot list accounts',
@@ -164,6 +176,36 @@ async function main() {
         realFile.status === 200 && body === 'a beneficiary photograph', `status=${realFile.status}`);
 
     fs.rmSync(path.join(uploadsDir, 'e2e.jpg'), { force: true });
+
+    // --- what an expired session is sent ------------------------------------
+    // The interface parses every GraphQL response as JSON. A bare-text
+    // "Unauthorized" made it throw "Unexpected token 'U', ... is not valid JSON",
+    // so a user whose session had ended was shown a parser error. It has to be
+    // JSON for the client to recognise it and sign them out.
+    const expired = await fetch(`${BASE}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', authorization: 'bearer no-longer-valid' },
+        body: JSON.stringify({ query: '{ allRecords { id } }' }),
+    });
+    const expiredText = await expired.text();
+    check('graphql refuses an invalid token with 401', expired.status === 401, `status=${expired.status}`);
+
+    let expiredJson = null;
+    try {
+        expiredJson = JSON.parse(expiredText);
+    } catch (e) {
+        // Falls through to the check below.
+    }
+    check('the 401 body is JSON, not bare text', expiredJson !== null, expiredText.slice(0, 40));
+    check('the 401 body says Unauthorized',
+        expiredJson && expiredJson.errors && expiredJson.errors[0].message === 'Unauthorized');
+
+    const anonymous = await fetch(`${BASE}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ allRecords { id } }' }),
+    });
+    check('graphql refuses an anonymous caller with 401', anonymous.status === 401, `status=${anonymous.status}`);
 
     server.kill();
 }

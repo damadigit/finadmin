@@ -33,8 +33,64 @@ function auth() {
   ]);
 }
 
+// Identifies the caller from the bearer token, or null.
+//
+// The same secrets the JWT strategy accepts are tried in turn, so a token issued
+// before the signing secret rotated still identifies its owner.
+async function identify(ctx) {
+  const header = ctx.get('authorization') || '';
+  const [scheme, value] = header.split(/\s+/);
+
+  // The interface sends "bearer", the upload helper sends "Bearer", so the
+  // scheme is compared without regard to case.
+  if (!value || String(scheme).toLowerCase() !== 'bearer') {
+    return null;
+  }
+
+  for (const secret of config.verificationSecrets) {
+    try {
+      const payload = jwt.verify(value, secret);
+      const user = await User.findById(payload.id);
+      if (user) return user;
+    } catch (e) {
+      // Not signed with this one; try the next.
+    }
+  }
+
+  return null;
+}
+
+// Rejects anonymous callers with a JSON body.
+//
+// This used to be passport.authenticate('jwt'), which ends the response with the
+// bare text "Unauthorized". The GraphQL client parses every response as JSON, so
+// it failed on that text and surfaced "Unexpected token 'U', "Unauthorized" is
+// not valid JSON" to the user instead of anything about their session having
+// expired. A JSON body keeps the failure legible, and gives the client something
+// it can recognise and act on by signing the user out.
 function isAuthenticated() {
-  return passport.authenticate('jwt');
+  return async (ctx, next) => {
+    const user = await identify(ctx);
+
+    if (!user) {
+      ctx.status = 401;
+      ctx.body = { errors: [{ message: 'Unauthorized' }] };
+      return;
+    }
+
+    ctx.state.user = user;
+    return next();
+  };
+}
+
+// Identifies the caller when a token is present without refusing anonymous
+// requests. Used where a credential may arrive some other way - a signed URL, for
+// instance - and the route itself decides whether that is enough.
+function tryAuthenticated() {
+  return async (ctx, next) => {
+    ctx.state.user = await identify(ctx);
+    return next();
+  };
 }
 
  function authEmail() {
@@ -80,4 +136,4 @@ function generateToken() {
   });
 }
 
-module.exports = {auth,isAuthenticated,authEmail,generateToken,isFacebookAuthenticated,isFacebookAuthenticatedCallback}
+module.exports = {auth,isAuthenticated,tryAuthenticated,authEmail,generateToken,isFacebookAuthenticated,isFacebookAuthenticatedCallback}
