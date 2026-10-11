@@ -148,7 +148,58 @@ function blockedReason(row, holder) {
     return null;
 }
 
+// Works out what a re-sync would do, without doing it.
+//
+// Finance has already made decisions on this list, so a re-sync must never take
+// them away silently. Beneficiaries who have become eligible since the month was
+// generated are added; everyone already on it is left exactly as finance left
+// them. A beneficiary who has dropped off - allowance cleared, or discontinued
+// - is only removed if finance never touched their row; if they did, removing it
+// is reported rather than performed.
+function planResync(existingRows, freshRows) {
+    const freshByRecord = new Map(freshRows.map(row => [String(row.record), row]));
+    const existingByRecord = new Map((existingRows || []).map(row => [String(row.record), row]));
+
+    const added = [];
+    const kept = [];
+    const removed = [];
+    const heldForReview = [];
+
+    for (const fresh of freshRows) {
+        const key = String(fresh.record);
+        const existing = existingByRecord.get(key);
+
+        if (!existing) {
+            added.push(fresh);
+            continue;
+        }
+
+        // Everything finance set is carried over verbatim. The one thing worth
+        // re-reading is whether the beneficiary is still eligible at all.
+        kept.push({
+            ...existing,
+            blocked: existing.blocked || fresh.blocked,
+        });
+    }
+
+    for (const existing of existingRows || []) {
+        if (freshByRecord.has(String(existing.record))) continue;
+
+        const edited = existing.included === false
+            || existing.note
+            || (existing.editedAt !== undefined && existing.editedAt !== null);
+
+        if (edited) {
+            heldForReview.push(existing);
+        } else {
+            removed.push(existing);
+        }
+    }
+
+    return { added, kept, removed, heldForReview };
+}
+
 module.exports = {
     MONTH_NAMES, BLOCKED, monthLabel, isEligible, buildRows, annotateDrift,
-    aggregateRows, blockedReason,
+    aggregateRows, blockedReason, planResync,
 };

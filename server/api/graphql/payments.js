@@ -6,7 +6,9 @@ const mongoose = require('mongoose');
 const { assertFinance, assertFinanceAdmin } = require('../../auth/requireFinance');
 const SetMonthlyAllowanceInput = require('./schemas/setAllowanceInput');
 const SetAccountHolderInput = require('./schemas/setAccountHolderInput');
-const { monthLabel, buildRows, annotateDrift, blockedReason } = require('../../payments/monthGeneration');
+const {
+    monthLabel, buildRows, annotateDrift, blockedReason, planResync,
+} = require('../../payments/monthGeneration');
 const { buildBankFile, bankLines, bankNames } = require('../../payments/bankFile');
 const {
     STATUS, canTransition, assertApprovable, assertHasPayees,
@@ -20,6 +22,21 @@ const GeneratePeriodInput = new GraphQLInputObjectType({
 // Only the fields being changed need to be sent. An absent amount means "leave
 // the amount alone", which is why the resolver checks for presence rather than
 // reading a value that may be legitimately null.
+const MonthInput = new GraphQLInputObjectType({
+    name: 'PaymentMonthInput',
+    fields: { month: { type: new GraphQLNonNull(GraphQLString) } },
+});
+
+const SyncPlanType = new GraphQLObjectType({
+    name: 'PaymentResyncPlan',
+    fields: () => ({
+        added: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PayoutRowType))) },
+        removedCount: { type: GraphQLInt },
+        heldForReviewCount: { type: GraphQLInt },
+        unchangedCount: { type: GraphQLInt },
+    }),
+});
+
 const ExportInput = new GraphQLInputObjectType({
     name: 'ExportBankFileInput',
     fields: {
@@ -210,6 +227,25 @@ module.exports = function registerPaymentFields(schemaComposer) {
     const AccountHolder = mongoose.model('AccountHolder');
     const PaymentPeriod = mongoose.model('PaymentPeriod');
 
+    // What the beneficiary list would produce if this month were generated now.
+    const freshRowsFor = async month => {
+        const records = await Record.find({ monthlyAllowance: { $gt: 0 } }).lean();
+        const holderIds = [...new Set(
+            records.map(r => (r.accountHolder ? String(r.accountHolder) : null)).filter(Boolean)
+        )];
+        const holders = holderIds.length
+            ? await AccountHolder.find({ _id: { $in: holderIds } }).lean()
+            : [];
+        const byHolderId = Object.fromEntries(holders.map(h => [String(h._id), h]));
+
+        const byRecordId = {};
+        records.forEach(record => {
+            if (record.accountHolder) byRecordId[String(record._id)] = byHolderId[String(record.accountHolder)];
+        });
+
+        return buildRows(records, byRecordId);
+    };
+
     // Loads the holders behind a set of rows and re-flags any whose bank details
     // have been corrected since the month was generated.
     const withDrift = async rows => {
@@ -261,6 +297,31 @@ module.exports = function registerPaymentFields(schemaComposer) {
     };
 
     schemaComposer.Query.addFields({
+        previewPaymentPeriodResync: {
+            type: SyncPlanType,
+            args: { record: { type: new GraphQLNonNull(MonthInput) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.record.month });
+                if (!period) throw new Error('That month has not been generated.');
+                if (period.status !== STATUS.DRAFT) {
+                    throw new Error('Only a draft month can be re-synced.');
+                }
+
+                const fresh = await freshRowsFor(period.month);
+                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh);
+
+                return {
+                    added: plan.added,
+                    removedCount: plan.removed.length,
+                    heldForReviewCount: plan.heldForReview.length,
+                    unchangedCount: plan.kept.length,
+                };
+            },
+        },
+
+
         paymentProfile: {
             type: PaymentProfileType,
             args: { id: 'MongoID!' },
@@ -401,6 +462,43 @@ module.exports = function registerPaymentFields(schemaComposer) {
         // since generation are surfaced on screen, but what was approved is what
         // pays - quietly substituting a corrected account number here would pay
         // something nobody approved.
+        // ---- re-sync ---------------------------------------------------------
+
+        // Refresh is not this: it reloads the list and changes nothing.
+        // Re-sync goes back to the beneficiaries and works out what it would do,
+        // which is shown before any of it is applied.
+
+        resyncPaymentPeriod: {
+            type: TransitionPayload,
+            args: { record: { type: new GraphQLNonNull(MonthInput) } },
+            resolve: async (source, args, context) => {
+                assertFinance(context);
+
+                const period = await PaymentPeriod.findOne({ month: args.record.month });
+                if (!period) throw new Error('That month has not been generated.');
+                if (period.status !== STATUS.DRAFT) {
+                    throw new Error('Only a draft month can be re-synced.');
+                }
+
+                const fresh = await freshRowsFor(period.month);
+                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh);
+
+                // Rows finance had already touched are kept exactly as they are.
+                // Removing one would silently undo a decision somebody made -
+                // the whole point of previewing the change first is that the
+                // re-sync reports what it would do and lets finance decide.
+                period.rows = [...plan.kept, ...plan.heldForReview, ...plan.added];
+                period.modifiedBy = context.ctx.state.user._id;
+                await period.save();
+
+                return {
+                    month: period.month,
+                    status: period.status,
+                    supersededExports: 0,
+                };
+            },
+        },
+
         exportBankFile: {
             type: BankFileType,
             args: { record: { type: new GraphQLNonNull(ExportInput) } },
