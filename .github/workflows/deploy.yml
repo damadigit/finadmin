@@ -78,8 +78,19 @@ jobs:
 
       - name: add environment file
         run: |
-          echo "TAG_COMMIT=${{ env.TAG_COMMIT }}" >> .env
-          echo "NODE_ENV=production" >> .env
+          # Written with a quoted heredoc, not echo. A database password may
+          # contain a backtick or a $, and echo would execute the first and
+          # expand the second, silently corrupting the credential.
+          cat >> .env <<'CONFIG'
+          TAG_COMMIT=${{ env.TAG_COMMIT }}
+          NODE_ENV=production
+          # The application refuses to start without these two. It previously
+          # fell back to a database URI committed in the source and to a
+          # well-known signing secret; both are gone.
+          MONGOLAB_URI=${{ secrets.MONGOLAB_URI }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES_IN=12h
+          CONFIG
 #          scp -o StrictHostKeyChecking=no .env ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:~/
       # Use appleboy/scp-action to securely copy both .env and docker-compose-prod.yml
       - name: Copy files via SCP

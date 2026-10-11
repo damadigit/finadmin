@@ -11,7 +11,6 @@ const {ModelTC:ApplicationModelTC} = buildSchema('Application',schemaComposer)
 const {ModelTC:RecordModelTC} = buildSchema('Record',schemaComposer);
 const {ModelTC:VisitModelTC}  = buildSchema('Visit',schemaComposer);
 const {ModelTC:PostModelTC}  = buildSchema('Post',schemaComposer);
-buildSchema('User',schemaComposer);
 
 // Payment side of the system. AccountHolder is reachable from a beneficiary's
 // payments panel, so it is composed here alongside the rest.
@@ -19,6 +18,54 @@ buildSchema('User',schemaComposer);
 // Both are guarded in the resolver, not just hidden in the interface: these are
 // the first models in the application that a role can be refused access to.
 const requireFinance = require('../../auth/requireFinance');
+const requireAdmin = require('../../auth/requireAdmin');
+
+// Accounts are the root of the permission model, so they are guarded rather than
+// composed open. Composed without a guard, this single line let any signed-in
+// user - a handler with no other powers - rewrite their own roles to financeAdmin,
+// rewrite anyone else's password, and delete accounts outright. The guard is
+// applied here rather than on the payments models because escalation defeats
+// those guards: a user who can edit a user can grant themselves a role that gets
+// past every one of them.
+const {ModelTC:UserModelTC} = buildSchema('User',schemaComposer, { guards: [requireAdmin] });
+
+// The password hash is removed from the User type and from every input that
+// carries it.
+//
+// Two separate problems, one field. Reading it hands an attacker every account's
+// hash to crack offline. Writing it lets the same attacker choose a new password
+// for any account, which is account takeover whether or not they can read
+// anything. Neither is reachable through the interface once the field is absent,
+// so this is not a hiding of the UI but the removal of the capability itself.
+const PASSWORD = 'password';
+
+const userInputTypes = [
+    'CreateOneUserInput', 'CreateManyUserInput',
+    'UpdateByIdUserInput', 'UpdateOneUserInput', 'UpdateManyUserInput',
+    'FilterUpdateOneUserInput', 'FilterUpdateManyUserInput',
+    'FilterFindOneUserInput', 'FilterRemoveOneUserInput', 'FilterRemoveManyUserInput',
+];
+
+[UserModelTC, ...userInputTypes.map(name => schemaComposer.getAnyTC(name))]
+    .filter(Boolean)
+    .forEach(type => {
+        if (type.getField(PASSWORD)) {
+            type.removeField(PASSWORD);
+        }
+    });
+
+// With password gone from the inputs, the composed create mutations can no longer
+// produce a valid account: the model requires a password, so createUser would fail
+// for every caller including an administrator. Rather than leave a mutation that
+// only ever errors, it is removed.
+//
+// Accounts are created through registration, which hashes the password server-side
+// and assigns the least privileged role, and roles are then granted
+// administratively through updateUser. That is the same path self-registration
+// already takes, so no capability is lost - a caller simply cannot now invent an
+// account with a password of their choosing in one request.
+schemaComposer.Mutation.removeField('createUser');
+schemaComposer.Mutation.removeField('createManyUser');
 
 // An account holder that is still linked to a beneficiary cannot be deleted:
 // the link is what a payment is made against, and silently dropping it would

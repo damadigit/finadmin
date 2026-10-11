@@ -23,4 +23,21 @@ function hasFinanceAdminRole(user) {
     return PAYMENT_ADMIN_ROLES.some(role => roles.includes(role));
 }
 
-module.exports = { PAYMENT_ROLES, PAYMENT_ADMIN_ROLES, hasPaymentRole, hasFinanceAdminRole };
+// Who may administer accounts.
+//
+// This is deliberately separate from the finance boundary. A payment role is
+// trusted with bank details and allowances; being trusted with those does not
+// make somebody the person who decides who else is trusted. Keeping them apart
+// means a finance officer cannot promote themselves, and a compromised finance
+// account cannot mint an administrator.
+const ADMIN_ROLES = ['admin'];
+
+function hasAdminRole(user) {
+    const roles = (user && user.roles) || [];
+    return ADMIN_ROLES.some(role => roles.includes(role));
+}
+
+module.exports = {
+    PAYMENT_ROLES, PAYMENT_ADMIN_ROLES, ADMIN_ROLES,
+    hasPaymentRole, hasFinanceAdminRole, hasAdminRole,
+};
