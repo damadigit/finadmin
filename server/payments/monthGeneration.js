@@ -174,11 +174,21 @@ function planResync(existingRows, freshRows) {
             continue;
         }
 
-        // Everything finance set is carried over verbatim. The one thing worth
-        // re-reading is whether the beneficiary is still eligible at all.
+        // Whatever finance decided is carried over verbatim: the tick, the
+        // note, the per-month amount. `blocked`, the receiving account and the
+        // holder are not finance's decisions - they are derived from the holder,
+        // so they are re-read rather than trusted from generation time. A row
+        // generated while its beneficiary was unlinked carries away its block as
+        // soon as the beneficiary is linked, and picks up the holder's account
+        // the same way a fresh generation would. A bank account finance can see
+        // is never silently replaced; a change to the real details is surfaced
+        // as drift when the month is read.
         kept.push({
             ...existing,
-            blocked: existing.blocked || fresh.blocked,
+            blocked: fresh.blocked,
+            bankAccount: existing.bankAccount || fresh.bankAccount,
+            accountHolder: existing.accountHolder || fresh.accountHolder,
+            accountHolderName: existing.accountHolderName || fresh.accountHolderName,
         });
     }
 

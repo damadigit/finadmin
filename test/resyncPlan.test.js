@@ -34,6 +34,33 @@ describe('planning a re-sync', () => {
         expect(plan.kept[0].included).toBe(false);
     });
 
+    it('clears a block whose cause finance has since fixed, and fills the account in', () => {
+        const existing = [
+            row('r1', { blocked: 'unlinked', accountHolderName: null, bankAccount: null }),
+        ];
+        const plan = planResync(existing, [
+            row('r1', {
+                accountHolderName: 'Almaz',
+                bankAccount: { bankName: 'Awash', accountNumber: '100' },
+            }),
+        ]);
+
+        expect(plan.kept[0].blocked).toBeNull();
+        expect(plan.kept[0].accountHolderName).toBe('Almaz');
+        expect(plan.kept[0].bankAccount).toEqual({ bankName: 'Awash', accountNumber: '100' });
+    });
+
+    it('does not silently replace a bank account a row already carries', () => {
+        const existing = [
+            row('r1', { bankAccount: { bankName: 'Awash', accountNumber: '100' } }),
+        ];
+        const plan = planResync(existing, [
+            row('r1', { bankAccount: { bankName: 'CBE', accountNumber: '200' } }),
+        ]);
+
+        expect(plan.kept[0].bankAccount).toEqual({ bankName: 'Awash', accountNumber: '100' });
+    });
+
     it('never overwrites a per-month amount adjustment', () => {
         const existing = [row('r1', { amount: 900 })];
         const plan = planResync(existing, [row('r1', { amount: 500 })]);
