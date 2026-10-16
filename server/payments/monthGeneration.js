@@ -163,19 +163,23 @@ function blockedReason(row, holder) {
 //
 // Finance has already made decisions on this list, so a re-sync must never take
 // them away silently. Beneficiaries who have become eligible since the month was
-// generated are added; everyone already on it is left exactly as finance left
-// them. A beneficiary who has dropped off - allowance cleared, or discontinued
-// - is only removed if finance never touched their row; if they did, removing it
-// is reported rather than performed.
+// generated are added; everyone already on it keeps the tick and note finance
+// gave them. A beneficiary who has dropped off - allowance cleared, or
+// discontinued - is only removed if finance never touched their row; if they
+// did, removing it is reported rather than performed.
 //
-// Bank accounts are the exception to "leave everything alone". Re-sync only ever
-// runs on a draft, which has not been approved and so cannot already have been
-// sent - so it is the one place a corrected account number can be taken up. A
-// row whose snapshot no longer matches any of the holder's current accounts is
-// stale and adopts the holder's current account (or is cleared back to "choose"
-// or "no account" if the holder no longer offers one). A row whose account the
-// holder still has is finance's choice and is kept. An approved month is never
-// re-synced, so this cannot rewrite a payout already committed.
+// Bank accounts and the amount are the exceptions to "leave everything alone".
+// Re-sync only ever runs on a draft, which has not been approved and so cannot
+// already have been sent - so it is the one place a corrected account number or
+// a changed standing allowance can be taken up. A row whose snapshot no longer
+// matches any of the holder's current accounts is stale and adopts the holder's
+// current account (or is cleared back to "choose" or "no account" if the holder
+// no longer offers one). A row whose account the holder still has is finance's
+// choice and is kept. The amount is re-read from the beneficiary so it always
+// mirrors the standing allowance: with the field read-only on screen, re-sync is
+// how a correction to the allowance reaches a month still being prepared. An
+// approved month is never re-synced, so this cannot rewrite a payout already
+// committed.
 function planResync(existingRows, freshRows, holdersByRecordId = {}) {
     const freshByRecord = new Map(freshRows.map(row => [String(row.record), row]));
     const existingByRecord = new Map((existingRows || []).map(row => [String(row.record), row]));
@@ -184,6 +188,7 @@ function planResync(existingRows, freshRows, holdersByRecordId = {}) {
     const kept = [];
     const removed = [];
     const heldForReview = [];
+    let revaluedCount = 0;
 
     for (const fresh of freshRows) {
         const key = String(fresh.record);
@@ -194,10 +199,11 @@ function planResync(existingRows, freshRows, holdersByRecordId = {}) {
             continue;
         }
 
-        // Whatever finance decided is carried over verbatim: the tick, the
-        // note, the per-month amount. `blocked` and the holder are derived from
-        // the holder rather than finance's decisions, so they are re-read. Only
-        // a bank account the holder no longer has is replaced; see above.
+        // Whatever finance decided is carried over verbatim: the tick and the
+        // note. The amount is re-read from the beneficiary, and `blocked` and
+        // the holder are derived from the holder rather than finance's
+        // decisions, so they are re-read too. Only a bank account the holder no
+        // longer has is replaced; see above.
         const holder = holdersByRecordId[key] || null;
         const drifted = holder ? !bankDetailsMatch(existing, holder) : false;
         const bankAccount = drifted ? fresh.bankAccount : (existing.bankAccount || fresh.bankAccount);
@@ -209,8 +215,11 @@ function planResync(existingRows, freshRows, holdersByRecordId = {}) {
             ? null
             : fresh.blocked;
 
+        if ((existing.amount || 0) !== (fresh.amount || 0)) revaluedCount += 1;
+
         kept.push({
             ...existing,
+            amount: fresh.amount,
             blocked,
             bankAccount,
             accountHolder: existing.accountHolder || fresh.accountHolder,
@@ -232,7 +241,7 @@ function planResync(existingRows, freshRows, holdersByRecordId = {}) {
         }
     }
 
-    return { added, kept, removed, heldForReview };
+    return { added, kept, removed, heldForReview, revaluedCount };
 }
 
 module.exports = {

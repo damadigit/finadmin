@@ -33,6 +33,7 @@ const SyncPlanType = new GraphQLObjectType({
         added: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PayoutRowType))) },
         removedCount: { type: GraphQLInt },
         heldForReviewCount: { type: GraphQLInt },
+        revaluedCount: { type: GraphQLInt },
         unchangedCount: { type: GraphQLInt },
     }),
 });
@@ -359,6 +360,7 @@ module.exports = function registerPaymentFields(schemaComposer) {
                     added: plan.added,
                     removedCount: plan.removed.length,
                     heldForReviewCount: plan.heldForReview.length,
+                    revaluedCount: plan.revaluedCount,
                     unchangedCount: plan.kept.length,
                 };
             },
@@ -535,10 +537,11 @@ module.exports = function registerPaymentFields(schemaComposer) {
                 const { rows: fresh, holdersByRecordId } = await freshRowsFor(period.month);
                 const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh, holdersByRecordId);
 
-                // Rows finance had already touched are kept exactly as they are.
-                // Removing one would silently undo a decision somebody made -
-                // the whole point of previewing the change first is that the
-                // re-sync reports what it would do and lets finance decide.
+                // Rows finance had already touched keep their tick and note;
+                // their amount is refreshed from the beneficiary. Removing one
+                // would silently undo a decision somebody made - the whole point
+                // of previewing the change first is that the re-sync reports
+                // what it would do and lets finance decide.
                 period.rows = [...plan.kept, ...plan.heldForReview, ...plan.added];
                 period.modifiedBy = context.ctx.state.user._id;
                 await period.save();

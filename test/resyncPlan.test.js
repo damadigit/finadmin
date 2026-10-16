@@ -19,12 +19,16 @@ describe('planning a re-sync', () => {
         expect(plan.removed).toEqual([]);
     });
 
-    it('leaves everything finance already decided exactly as it is', () => {
+    it('keeps the decisions finance made and refreshes the amount', () => {
         const existing = [row('r1', { included: false, note: 'left the area', amount: 0 })];
         const plan = planResync(existing, [row('r1', { amount: 500, note: null, included: true })]);
 
         expect(plan.added).toEqual([]);
-        expect(plan.kept).toEqual(existing);
+        expect(plan.kept[0]).toMatchObject({
+            included: false,
+            note: 'left the area',
+            amount: 500,
+        });
     });
 
     it('never re-enables a row finance unticked', () => {
@@ -87,11 +91,18 @@ describe('planning a re-sync', () => {
         expect(plan.kept[0].blocked).toBeNull();
     });
 
-    it('never overwrites a per-month amount adjustment', () => {
+    it("refreshes the amount from the beneficiary's current standing allowance", () => {
         const existing = [row('r1', { amount: 900 })];
         const plan = planResync(existing, [row('r1', { amount: 500 })]);
 
-        expect(plan.kept[0].amount).toBe(900);
+        expect(plan.kept[0].amount).toBe(500);
+        expect(plan.revaluedCount).toBe(1);
+    });
+
+    it('reports no amount change when the allowance is unchanged', () => {
+        const plan = planResync([row('r1', { amount: 500 })], [row('r1', { amount: 500 })]);
+
+        expect(plan.revaluedCount).toBe(0);
     });
 
     it('removes a beneficiary who dropped off, if nobody touched their row', () => {
@@ -127,10 +138,10 @@ describe('planning a re-sync', () => {
         const rows = [row('r1'), row('r2')];
         const plan = planResync(rows, rows);
 
-        expect(plan).toEqual({ added: [], kept: rows, removed: [], heldForReview: [] });
+        expect(plan).toEqual({ added: [], kept: rows, removed: [], heldForReview: [], revaluedCount: 0 });
     });
 
     it('copes with an empty month', () => {
-        expect(planResync([], [])).toEqual({ added: [], kept: [], removed: [], heldForReview: [] });
+        expect(planResync([], [])).toEqual({ added: [], kept: [], removed: [], heldForReview: [], revaluedCount: 0 });
     });
 });

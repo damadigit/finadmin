@@ -99,7 +99,7 @@ describe('re-syncing a draft month', () => {
         expect((await rows()).map(r => r.registrationId)).toEqual(['ET-0001']);
     });
 
-    it('leaves a tick, an amount and a note exactly as finance set them', async () => {
+    it('leaves a tick and a note as finance set them, refreshing the amount', async () => {
         const holder = await startMonth();
         const first = await Record.findOne({ registrationId: 'ET-0001' });
         await edit(first, { included: false, note: 'left the area', amount: 0 });
@@ -108,7 +108,7 @@ describe('re-syncing a draft month', () => {
         await gql.run(schema, resync, { user: finance, variables: { record: { month: '2026-08' } } });
 
         const kept = (await rows()).find(r => r.registrationId === 'ET-0001');
-        expect(kept).toMatchObject({ included: false, note: 'left the area', amount: 0 });
+        expect(kept).toMatchObject({ included: false, note: 'left the area', amount: 500 });
     });
 
     it('removes a beneficiary who dropped off, untouched by finance', async () => {
