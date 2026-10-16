@@ -21,6 +21,18 @@ const PayoutRowSchema = new Schema({
         }
     },
 
+    // An addition on top of this month's amount - a one-off top-up that pays
+    // out with the row but does not touch the standing allowance. Defaults to
+    // nothing added; a row is worth amount + extraAmount.
+    extraAmount: {
+        type: Number,
+        default: 0,
+        validate: {
+            validator: v => v === undefined || v === null || (Number.isInteger(v) && v >= 0),
+            message: 'An extra amount must be a whole number of birr, zero or more.'
+        }
+    },
+
     // The tick. The note beside it means different things either way: on a
     // ticked row it reaches the bank, on an unticked one it records why.
     included: { type: Boolean, default: true },

@@ -45,7 +45,9 @@ describe('re-syncing a draft month', () => {
     const resync = 'mutation r($record: PaymentMonthInput!) { resyncPaymentPeriod(record: $record) { month status } }';
     const readRows = `
         query m($month: String!) {
-            paymentMonth(month: $month) { rows { record registrationId amount included note } }
+            paymentMonth(month: $month) {
+                rows { record registrationId amount included note bankName accountNumber bankDetailsChanged }
+            }
         }`;
 
     const allow = (record, amount) => gql.run(schema, setAllowance, {
@@ -154,6 +156,31 @@ describe('re-syncing a draft month', () => {
         expect(plan.previewPaymentPeriodResync).toMatchObject({
             added: [], removedCount: 0, heldForReviewCount: 0, unchangedCount: 1,
         });
+    });
+
+    it('takes up a corrected bank account, clearing the drift flag', async () => {
+        const holder = await startMonth();
+
+        // The generated row snapshots the account as it was.
+        let row = (await rows()).find(r => r.registrationId === 'ET-0001');
+        expect(row.accountNumber).toBe('1000');
+        expect(row.bankDetailsChanged).toBe(false);
+
+        // The account number is corrected after generation: the snapshot no
+        // longer matches, so reading flags the drift.
+        holder.banks = [{ bankName: 'CBE', accountNumber: '2000' }];
+        await holder.save();
+
+        row = (await rows()).find(r => r.registrationId === 'ET-0001');
+        expect(row.accountNumber).toBe('1000');
+        expect(row.bankDetailsChanged).toBe(true);
+
+        // Re-sync is the draft-only action that picks the correction up.
+        await gql.run(schema, resync, { user: finance, variables: { record: { month: '2026-08' } } });
+
+        row = (await rows()).find(r => r.registrationId === 'ET-0001');
+        expect(row.accountNumber).toBe('2000');
+        expect(row.bankDetailsChanged).toBe(false);
     });
 
     it('refuses on a month that is no longer a draft', async () => {

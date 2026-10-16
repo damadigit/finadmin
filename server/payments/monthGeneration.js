@@ -77,6 +77,10 @@ function buildRows(records, holdersByRecordId = {}) {
             // future months, never to this one.
             amount: record.monthlyAllowance,
 
+            // Nothing added until finance sets it. The row is worth
+            // amount + extraAmount.
+            extraAmount: 0,
+
             included: blocked === null,
             note: null,
 
@@ -100,6 +104,13 @@ function annotateDrift(rows, holdersByRecordId = {}) {
         ...row,
         bankDetailsChanged: !bankDetailsMatch(row, holdersByRecordId[String(row.record)]),
     }));
+}
+
+// What a row is worth: its amount for the month plus any one-off extra. Kept
+// in one place so the tick list, the bank file and the transfers cannot drift
+// apart on what a row pays.
+function rowTotal(row) {
+    return (row.amount || 0) + (row.extraAmount || 0);
 }
 
 // Merges ticked rows into one line per account holder, per bank.
@@ -126,7 +137,7 @@ function aggregateRows(rows) {
             });
         }
         const line = byHolder.get(key);
-        line.amount += row.amount;
+        line.amount += rowTotal(row);
         if (row.note) line.notes.push(row.note);
     }
 
@@ -156,7 +167,16 @@ function blockedReason(row, holder) {
 // them. A beneficiary who has dropped off - allowance cleared, or discontinued
 // - is only removed if finance never touched their row; if they did, removing it
 // is reported rather than performed.
-function planResync(existingRows, freshRows) {
+//
+// Bank accounts are the exception to "leave everything alone". Re-sync only ever
+// runs on a draft, which has not been approved and so cannot already have been
+// sent - so it is the one place a corrected account number can be taken up. A
+// row whose snapshot no longer matches any of the holder's current accounts is
+// stale and adopts the holder's current account (or is cleared back to "choose"
+// or "no account" if the holder no longer offers one). A row whose account the
+// holder still has is finance's choice and is kept. An approved month is never
+// re-synced, so this cannot rewrite a payout already committed.
+function planResync(existingRows, freshRows, holdersByRecordId = {}) {
     const freshByRecord = new Map(freshRows.map(row => [String(row.record), row]));
     const existingByRecord = new Map((existingRows || []).map(row => [String(row.record), row]));
 
@@ -175,18 +195,24 @@ function planResync(existingRows, freshRows) {
         }
 
         // Whatever finance decided is carried over verbatim: the tick, the
-        // note, the per-month amount. `blocked`, the receiving account and the
-        // holder are not finance's decisions - they are derived from the holder,
-        // so they are re-read rather than trusted from generation time. A row
-        // generated while its beneficiary was unlinked carries away its block as
-        // soon as the beneficiary is linked, and picks up the holder's account
-        // the same way a fresh generation would. A bank account finance can see
-        // is never silently replaced; a change to the real details is surfaced
-        // as drift when the month is read.
+        // note, the per-month amount. `blocked` and the holder are derived from
+        // the holder rather than finance's decisions, so they are re-read. Only
+        // a bank account the holder no longer has is replaced; see above.
+        const holder = holdersByRecordId[key] || null;
+        const drifted = holder ? !bankDetailsMatch(existing, holder) : false;
+        const bankAccount = drifted ? fresh.bankAccount : (existing.bankAccount || fresh.bankAccount);
+
+        // "Choose an account" is the holder having more than one and no account
+        // chosen. A row that already carries an account the holder still has is
+        // not that, so it stays unblocked.
+        const blocked = fresh.blocked === BLOCKED.CHOOSE_BANK_ACCOUNT && !drifted && existing.bankAccount
+            ? null
+            : fresh.blocked;
+
         kept.push({
             ...existing,
-            blocked: fresh.blocked,
-            bankAccount: existing.bankAccount || fresh.bankAccount,
+            blocked,
+            bankAccount,
             accountHolder: existing.accountHolder || fresh.accountHolder,
             accountHolderName: existing.accountHolderName || fresh.accountHolderName,
         });
@@ -211,5 +237,5 @@ function planResync(existingRows, freshRows) {
 
 module.exports = {
     MONTH_NAMES, BLOCKED, monthLabel, isEligible, buildRows, annotateDrift,
-    aggregateRows, blockedReason, planResync,
+    aggregateRows, rowTotal, blockedReason, planResync,
 };

@@ -49,7 +49,7 @@ describe('working the tick list', () => {
         query month($month: String!) {
             paymentMonth(month: $month) {
                 status
-                rows { record registrationId amount included note blocked bankName accountNumber }
+                rows { record registrationId amount extraAmount included note blocked bankName accountNumber }
             }
         }`;
 
@@ -143,6 +143,43 @@ describe('working the tick list', () => {
         it('refuses a negative amount', async () => {
             const { record } = await setup();
             await expect(edit(record, { amount: -1 })).rejects.toThrow(/whole number/);
+        });
+    });
+
+    describe('a one-off extra on a row', () => {
+        it('defaults to nothing added', async () => {
+            await setup();
+            expect((await rows())[0].extraAmount).toBe(0);
+        });
+
+        it('adds to the row without touching the month amount or the allowance', async () => {
+            const { record } = await setup({ amount: 500 });
+
+            await edit(record, { extraAmount: 250 });
+
+            const [row] = await rows();
+            expect(row.extraAmount).toBe(250);
+            expect(row.amount).toBe(500);
+            expect((await Record.findById(record._id)).monthlyAllowance).toBe(500);
+        });
+
+        it('can be cleared back to zero', async () => {
+            const { record } = await setup();
+            await edit(record, { extraAmount: 250 });
+
+            await edit(record, { extraAmount: 0 });
+
+            expect((await rows())[0].extraAmount).toBe(0);
+        });
+
+        it('refuses a fractional extra', async () => {
+            const { record } = await setup();
+            await expect(edit(record, { extraAmount: 10.5 })).rejects.toThrow();
+        });
+
+        it('refuses a negative extra', async () => {
+            const { record } = await setup();
+            await expect(edit(record, { extraAmount: -1 })).rejects.toThrow(/whole number/);
         });
     });
 

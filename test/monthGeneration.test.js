@@ -1,5 +1,5 @@
 const {
-    monthLabel, isEligible, buildRows, annotateDrift, aggregateRows, BLOCKED,
+    monthLabel, isEligible, buildRows, annotateDrift, aggregateRows, rowTotal, BLOCKED,
 } = require('../server/payments/monthGeneration');
 
 // No database here on purpose. These are the rules that decide who gets paid and
@@ -62,6 +62,7 @@ describe('month generation', () => {
             expect(row).toMatchObject({
                 registrationId: 'ET-0001',
                 amount: 500,
+                extraAmount: 0,
                 included: true,
                 blocked: null,
                 accountHolderName: 'Almaz',
@@ -185,6 +186,20 @@ describe('month generation', () => {
 
             expect(lines).toHaveLength(1);
             expect(lines[0].amount).toBe(800);
+        });
+
+        it('adds a one-off extra on top of the amount', () => {
+            expect(rowTotal({ amount: 500, extraAmount: 250 })).toBe(750);
+            expect(rowTotal({ amount: 500 })).toBe(500);
+        });
+
+        it('pays the amount plus the extra through the bank line', () => {
+            const lines = aggregateRows([
+                row({ record: 'r1', amount: 500, extraAmount: 250 }),
+                row({ record: 'r2', amount: 300 }),
+            ]);
+
+            expect(lines[0].amount).toBe(1050);
         });
 
         it('keeps different account holders apart', () => {

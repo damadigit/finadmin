@@ -50,15 +50,41 @@ describe('planning a re-sync', () => {
         expect(plan.kept[0].bankAccount).toEqual({ bankName: 'Awash', accountNumber: '100' });
     });
 
-    it('does not silently replace a bank account a row already carries', () => {
+    it("adopts the holder's corrected account when the stored one has drifted", () => {
         const existing = [
             row('r1', { bankAccount: { bankName: 'Awash', accountNumber: '100' } }),
         ];
-        const plan = planResync(existing, [
+        const fresh = [
             row('r1', { bankAccount: { bankName: 'CBE', accountNumber: '200' } }),
-        ]);
+        ];
+        // The holder has moved to a single new account; the old one is gone.
+        const holders = { r1: { _id: 'h1', banks: [{ bankName: 'CBE', accountNumber: '200' }] } };
+
+        const plan = planResync(existing, fresh, holders);
+
+        expect(plan.kept[0].bankAccount).toEqual({ bankName: 'CBE', accountNumber: '200' });
+    });
+
+    it('keeps a bank account finance chose while the holder still has it', () => {
+        const existing = [
+            row('r1', { bankAccount: { bankName: 'Awash', accountNumber: '100' } }),
+        ];
+        // The holder now has two accounts, so a fresh row would choose neither.
+        const fresh = [row('r1', { bankAccount: null, blocked: 'choose-bank-account' })];
+        const holders = {
+            r1: {
+                _id: 'h1',
+                banks: [
+                    { bankName: 'Awash', accountNumber: '100' },
+                    { bankName: 'CBE', accountNumber: '200' },
+                ],
+            },
+        };
+
+        const plan = planResync(existing, fresh, holders);
 
         expect(plan.kept[0].bankAccount).toEqual({ bankName: 'Awash', accountNumber: '100' });
+        expect(plan.kept[0].blocked).toBeNull();
     });
 
     it('never overwrites a per-month amount adjustment', () => {

@@ -68,6 +68,7 @@ const SetPayoutRowInput = new GraphQLInputObjectType({
         record: { type: 'MongoID!' },
         included: { type: GraphQLBoolean },
         amount: { type: GraphQLInt },
+        extraAmount: { type: GraphQLInt },
         note: { type: GraphQLString },
         bankAccount: { type: BankChoiceInput },
     },
@@ -94,6 +95,17 @@ const AccountHolderType = new GraphQLObjectType({
         id: { type: GraphQLString },
         name: { type: GraphQLString },
         banks: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(BankAccountType))) },
+    }),
+});
+
+const AccountHolderBeneficiaryType = new GraphQLObjectType({
+    name: 'AccountHolderBeneficiary',
+    fields: () => ({
+        id: { type: GraphQLString },
+        registrationId: { type: GraphQLString },
+        name: { type: GraphQLString },
+        fatherName: { type: GraphQLString },
+        monthlyAllowance: { type: GraphQLInt },
     }),
 });
 
@@ -199,6 +211,7 @@ const PayoutRowType = new GraphQLObjectType({
         name: { type: GraphQLString },
         fatherName: { type: GraphQLString },
         amount: { type: GraphQLInt },
+        extraAmount: { type: GraphQLInt },
         included: { type: GraphQLBoolean },
         note: { type: GraphQLString },
         accountHolderName: { type: GraphQLString },
@@ -227,7 +240,33 @@ module.exports = function registerPaymentFields(schemaComposer) {
     const AccountHolder = mongoose.model('AccountHolder');
     const PaymentPeriod = mongoose.model('PaymentPeriod');
 
+    // The account holder list shows who is paid through each holder and the
+    // standing amount each of them carries. The allowance is deliberately not on
+    // the Record type, so it is read here, on the AccountHolder type - which is
+    // itself finance-guarded, so the amounts stay on finance's side of the
+    // boundary like every other payment field.
+    schemaComposer.getOTC('AccountHolder').addFields({
+        beneficiaries: {
+            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(AccountHolderBeneficiaryType))),
+            resolve: async holder => {
+                if (!holder || !holder._id) return [];
+                const records = await Record.find({ accountHolder: holder._id }).lean();
+                return records.map(record => ({
+                    id: record._id.toString(),
+                    registrationId: record.registrationId || null,
+                    name: record.name || null,
+                    fatherName: record.fatherName || null,
+                    monthlyAllowance: typeof record.monthlyAllowance === 'number'
+                        ? record.monthlyAllowance
+                        : null,
+                }));
+            },
+        },
+    });
+
     // What the beneficiary list would produce if this month were generated now.
+    // The holders are returned alongside the rows so a re-sync can tell whether
+    // a row's stored account still exists on the holder.
     const freshRowsFor = async month => {
         const records = await Record.find({ monthlyAllowance: { $gt: 0 } }).lean();
         const holderIds = [...new Set(
@@ -243,7 +282,7 @@ module.exports = function registerPaymentFields(schemaComposer) {
             if (record.accountHolder) byRecordId[String(record._id)] = byHolderId[String(record.accountHolder)];
         });
 
-        return buildRows(records, byRecordId);
+        return { rows: buildRows(records, byRecordId), holdersByRecordId: byRecordId };
     };
 
     // Loads the holders behind a set of rows and re-flags any whose bank details
@@ -313,8 +352,8 @@ module.exports = function registerPaymentFields(schemaComposer) {
                     throw new Error('Only a draft month can be re-synced.');
                 }
 
-                const fresh = await freshRowsFor(period.month);
-                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh);
+                const { rows: fresh, holdersByRecordId } = await freshRowsFor(period.month);
+                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh, holdersByRecordId);
 
                 return {
                     added: plan.added,
@@ -436,6 +475,15 @@ module.exports = function registerPaymentFields(schemaComposer) {
                     row.amount = input.amount;
                 }
 
+                if ('extraAmount' in input && input.extraAmount !== undefined) {
+                    if (!Number.isInteger(input.extraAmount) || input.extraAmount < 0) {
+                        throw new Error('An extra amount must be a whole number of birr, zero or more.');
+                    }
+                    // A one-off addition for this month alone. It pays out with
+                    // the row but never changes the standing allowance.
+                    row.extraAmount = input.extraAmount;
+                }
+
                 if ('note' in input && input.note !== undefined) {
                     row.note = input.note;
                 }
@@ -484,8 +532,8 @@ module.exports = function registerPaymentFields(schemaComposer) {
                     throw new Error('Only a draft month can be re-synced.');
                 }
 
-                const fresh = await freshRowsFor(period.month);
-                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh);
+                const { rows: fresh, holdersByRecordId } = await freshRowsFor(period.month);
+                const plan = planResync((period.rows || []).map(r => (r.toObject ? r.toObject() : r)), fresh, holdersByRecordId);
 
                 // Rows finance had already touched are kept exactly as they are.
                 // Removing one would silently undo a decision somebody made -
