@@ -107,27 +107,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             docker login -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }} ${{ secrets.REGISTRY }}
             cd ~/.deploy/${{ github.event.repository.name }}
-
-            # Free disk before pulling.
-            #
-            # The server filled up and the pull failed part-way through, leaving
-            # the stack with no running app and Caddy answering 502. The old
-            # `down` ran before `pull`, so the app was already gone when the
-            # pull failed. Pruning first removes images no running container is
-            # using (the previous finadmin release and its build layers, the bulk
-            # of the space) while leaving the running database and its named
-            # volume untouched. Named volumes are never removed without an
-            # explicit --volumes, which is deliberately not used here.
             df -h /
-            docker system prune -af
 
-            # Pull before touching the running stack, so a failed pull leaves the
-            # current release serving instead of an empty port.
+            # Pull before touching the running stack. The old order ran
+            # `compose down` first, so when a pull failed for want of disk the
+            # app was already gone and Caddy answered 502 on every path. Pulling
+            # first means a failed pull leaves the current release serving.
             docker compose -p finadmin -f docker-compose-prod.yml pull
             docker compose -p finadmin -f docker-compose-prod.yml up -d --remove-orphans
-
-            # Drop the image the new release replaced, so recurring deploys do
-            # not accumulate until the disk fills again.
-            docker image prune -af
-            df -h /
           EOF
