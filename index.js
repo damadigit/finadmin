@@ -71,15 +71,6 @@ async function StartServer() {
     // await server.applyMiddleware({
     //     app,
     // });
-    app.use(async (ctx, next) => {
-        await next();
-        if (ctx.path === '/graphql') {
-            const b = typeof ctx.body === 'string' ? ctx.body : JSON.stringify(ctx.body);
-            const q = (ctx.request.body && ctx.request.body.query) || '';
-            console.log('GQL-REQ', (q || '').replace(/\s+/g, ' ').slice(0, 180));
-            console.log('GQL-RESP', (b || '').length, (b || '').slice(0, 400));
-        }
-    });
     app.use(isAuthenticated());
     app.use(server.getMiddleware());
     // app.use(ctx => ctx.status = 404);
