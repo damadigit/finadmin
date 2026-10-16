@@ -104,15 +104,27 @@ function generateToken() {
     if (user === false) {
       ctx.status = 401;
     } else {
+      // Only the id and the roles are signed.
+      //
+      // On the email path `user` is a full user document, and signing it whole
+      // put the bcrypt password hash - and anything the schema grows later -
+      // inside a token that is stored in the browser and readable by anyone who
+      // holds it. The JWT strategy reads the account back from the database on
+      // every request, so the id is all it needs to identify the caller.
+      //
+      // The register path sets `user` to a bare id with `roles` beside it, hence
+      // both shapes handled here.
+      const userId = user && user._id ? user._id : user;
+      const userRoles = roles || (user && user.roles) || [];
+
       // Signed with the current secret only, and given an expiry. Tokens issued
       // before the secret rotated stay valid through the legacy verification
       // path in the JWT strategy; they are simply never minted again.
-      const jwtToken = jwt.sign({ id: user, roles }, config.secret, {
+      const token = jwt.sign({ id: userId, roles: userRoles }, config.secret, {
         expiresIn: config.expiresIn,
       });
-      const token =  jwtToken//`JWT ${jwtToken}`;
 
-      const currentUser = await User.findOne({ _id: user });
+      const currentUser = await User.findOne({ _id: userId });
 
       ctx.status = 200;
       ctx.body = {
