@@ -183,28 +183,61 @@ const STRIPPED_FROM_USER_INPUTS = [ROLES, 'createdBy', 'modifiedBy'];
         });
     });
 
-// An account holder that is still linked to a beneficiary cannot be deleted:
-// the link is what a payment is made against, and silently dropping it would
-// turn a paid beneficiary into an unexplained gap in the next month.
-const refuseDeleteOfLinkedHolder = async (args) => {
-    const query = args._id ? { _id: args._id } : args.filter;
-    if (!query) return;
+// Deleting an account holder unlinks its beneficiaries first.
+//
+// The link is what a payment is made against, so a dangling reference would turn
+// a beneficiary into an unexplained gap in the next month. The previous rule was
+// to refuse the delete outright, but the interface now confirms the consequence
+// ("N beneficiaries will be unlinked") before deleting, so finance can tidy up a
+// holder without having to detach each beneficiary by hand first.
+//
+// The unlink happens here rather than in the interface because it has to cover
+// the single-document and the bulk delete paths alike, and because the delete
+// must never run while a record still points at the holder being removed.
+// Historical payment months are unaffected: their rows keep their own snapshot
+// of the holder and bank account.
+const HOLDER_UNEVALUABLE_FILTER_KEYS = ['_operators', 'OR', 'AND'];
 
-    const ids = (await mongoose.model('AccountHolder').find(query).select('_id')).map(d => d._id);
-    if (ids.length === 0) return;
+function holderDeleteQuery(args) {
+    if (args._id) return { _id: args._id };
 
-    const linked = await mongoose.model('Record').countDocuments({ accountHolder: { $in: ids } });
+    const filter = args.filter;
+    if (!filter) return null;
 
-    if (linked > 0) {
+    // A filter this guard cannot evaluate may match holders whose beneficiaries
+    // it would fail to unlink, leaving a dangling reference. Refusing is better
+    // than deleting into an unknown state.
+    const unevaluable = HOLDER_UNEVALUABLE_FILTER_KEYS.filter(key => filter[key] !== undefined);
+    if (unevaluable.length > 0) {
         throw new Error(
-            `Cannot delete: ${linked} beneficiary record(s) are still linked to this account holder. Detach them first.`
+            `Cannot delete with a filter using ${unevaluable.join(', ')}: the beneficiaries of the `
+            + 'matching account holders cannot be unlinked safely. Delete the holders by id instead.'
         );
     }
+
+    // `_ids` is a graphql-compose-mongoose convention rather than a Mongo field.
+    if (Array.isArray(filter._ids)) return { _id: { $in: filter._ids } };
+
+    return filter;
+}
+
+const detachBeneficiariesBeforeDelete = async (args, context) => {
+    const query = holderDeleteQuery(args);
+    if (!query) return;
+
+    const ids = (await mongoose.model('AccountHolder').find(query).select('_id').lean()).map(d => d._id);
+    if (ids.length === 0) return;
+
+    const update = { $unset: { accountHolder: 1 } };
+    const user = context && context.ctx && context.ctx.state && context.ctx.state.user;
+    if (user && user._id) update.$set = { modifiedBy: user._id };
+
+    await mongoose.model('Record').updateMany({ accountHolder: { $in: ids } }, update);
 };
 
 const {ModelTC:AccountHolderModelTC} = buildSchema('AccountHolder', schemaComposer, {
     guards: [requireFinance],
-    deleteGuard: refuseDeleteOfLinkedHolder,
+    deleteGuard: detachBeneficiariesBeforeDelete,
 });
 const {ModelTC:PaymentPeriodModelTC} = buildSchema('PaymentPeriod', schemaComposer, { guards: [requireFinance] });
 

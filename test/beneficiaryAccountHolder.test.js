@@ -94,23 +94,37 @@ describe('beneficiaries and account holders', () => {
             }
         `;
 
-        it('refuses and says how many are still linked', async () => {
+        it('unlinks its beneficiaries and then deletes the holder', async () => {
             const shared = await holder();
-            await createRecord({ accountHolder: shared._id });
+            const hana = await createRecord({ name: 'Hana', accountHolder: shared._id });
+            const sara = await createRecord({ name: 'Sara', accountHolder: shared._id });
 
-            await expect(
-                gql.run(schema, deleteHolder, { user, variables: { _id: shared._id.toString() } })
-            ).rejects.toThrow(/still linked/);
+            const data = await gql.run(schema, deleteHolder, {
+                user, variables: { _id: shared._id.toString() },
+            });
+
+            expect(data.deleteAccountHolder.recordId).toBe(shared._id.toString());
+            expect(await AccountHolder.countDocuments({})).toBe(0);
+
+            // The beneficiaries themselves are kept, only the link is cleared.
+            expect(await Record.countDocuments({})).toBe(2);
+            expect(await Record.countDocuments({ accountHolder: { $in: [shared._id] } })).toBe(0);
+
+            const detached = await Record.find({ _id: { $in: [hana._id, sara._id] } });
+            detached.forEach(record => expect(record.accountHolder).toBeUndefined());
         });
 
-        it('allows the delete once every beneficiary is detached', async () => {
-            const shared = await holder();
-            const record = await createRecord({ accountHolder: shared._id });
+        it('leaves other holders and their beneficiaries alone', async () => {
+            const removed = await holder({ name: 'Removed' });
+            const kept = await holder({ name: 'Kept' });
+            const removedRecord = await createRecord({ name: 'Hana', accountHolder: removed._id });
+            const keptRecord = await createRecord({ name: 'Sara', accountHolder: kept._id });
 
-            await record.updateOne({ accountHolder: undefined });
-            await gql.run(schema, deleteHolder, { user, variables: { _id: shared._id.toString() } });
+            await gql.run(schema, deleteHolder, { user, variables: { _id: removed._id.toString() } });
 
-            expect(await AccountHolder.countDocuments({})).toBe(0);
+            expect(await AccountHolder.countDocuments({})).toBe(1);
+            expect((await Record.findById(removedRecord._id)).accountHolder).toBeUndefined();
+            expect((await Record.findById(keptRecord._id)).accountHolder.toString()).toBe(kept._id.toString());
         });
 
         it('allows deleting a holder that was never linked', async () => {
@@ -121,10 +135,10 @@ describe('beneficiaries and account holders', () => {
             expect(await AccountHolder.countDocuments({})).toBe(0);
         });
 
-        it('refuses a bulk delete that would orphan a beneficiary', async () => {
-            const shared = await holder({ name: 'Linked' });
+        it('unlinks the beneficiaries of every holder in a bulk delete', async () => {
+            const linked = await holder({ name: 'Linked' });
             await holder({ name: 'Spare' });
-            await createRecord({ accountHolder: shared._id });
+            const record = await createRecord({ name: 'Hana', accountHolder: linked._id });
 
             const bulkDelete = `
                 mutation deleteManyAccountHolder($filter: FilterRemoveManyAccountHolderInput!) {
@@ -132,18 +146,32 @@ describe('beneficiaries and account holders', () => {
                 }
             `;
 
-            await expect(
-                gql.run(schema, bulkDelete, { user, variables: { filter: { name: 'Linked' } } })
-            ).rejects.toThrow(/still linked/);
-
-            expect(await AccountHolder.countDocuments({})).toBe(2);
-
-            // The unlinked holder goes through on the same filter.
-            const spared = await gql.run(schema, bulkDelete, {
-                user, variables: { filter: { name: 'Spare' } },
+            const data = await gql.run(schema, bulkDelete, {
+                user, variables: { filter: { name: 'Linked' } },
             });
-            expect(spared.deleteManyAccountHolder.numAffected).toBe(1);
+
+            expect(data.deleteManyAccountHolder.numAffected).toBe(1);
             expect(await AccountHolder.countDocuments({})).toBe(1);
+            expect(await Record.countDocuments({ accountHolder: linked._id })).toBe(0);
+            expect((await Record.findById(record._id)).accountHolder).toBeUndefined();
+        });
+
+        it('unlinks beneficiaries for a bulk delete by id', async () => {
+            const shared = await holder({ name: 'Shared' });
+            await createRecord({ name: 'Hana', accountHolder: shared._id });
+
+            const bulkDeleteByIds = `
+                mutation deleteManyAccountHolder($filter: FilterRemoveManyAccountHolderInput!) {
+                    deleteManyAccountHolder(filter: $filter) { numAffected }
+                }
+            `;
+
+            const data = await gql.run(schema, bulkDeleteByIds, {
+                user, variables: { filter: { _ids: [shared._id.toString()] } },
+            });
+
+            expect(data.deleteManyAccountHolder.numAffected).toBe(1);
+            expect(await Record.countDocuments({ accountHolder: shared._id })).toBe(0);
         });
     });
 });

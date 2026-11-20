@@ -14,9 +14,10 @@ module.exports = function(name,schemaComposer, options = {}) {
 
     // Optional check run before any delete on this model. It receives the
     // resolver's arguments and may throw to block the delete. Models use it to
-    // refuse removals that would orphan something else - a holder that is still
-    // linked to a beneficiary, for instance. Covers the bulk path as well as
-    // the single-document one.
+    // refuse removals that would orphan something else, or to clear the
+    // references that would be left dangling - an account holder's beneficiary
+    // links, for instance. Covers the bulk path as well as the single-document
+    // one.
     const deleteGuard = options.deleteGuard;
     const guardDelete = deleteGuard
         ? [async (resolve, root, args, context, info) => {
